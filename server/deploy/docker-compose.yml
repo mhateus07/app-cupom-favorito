@@ -1,0 +1,59 @@
+# Produção na VPS Contabo, em /opt/cupom-favorito (código da API em ./src, segredos em
+# ./.env, gerados na própria VPS pelo deploy.sh). O Postgres fica na rede interna e
+# escuta só em 127.0.0.1:5470 (acesso por túnel SSH). O Traefik do EasyPanel faz o
+# HTTPS (Let's Encrypt) pela rede `easypanel`. As migrações rodam quando a API sobe.
+name: cupom-favorito
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cupom-favorito-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cupom
+      POSTGRES_USER: cupom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - cupom_pg:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5470:5432"
+    networks:
+      - cupom_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cupom -d cupom"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./src
+    container_name: cupom-favorito-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "4200"
+      DATABASE_URL: postgres://cupom:${POSTGRES_PASSWORD}@cupom-favorito-postgres:5432/cupom
+      JWT_SECRET: ${JWT_SECRET}
+      # E-mail da recuperação de senha. Vazio = não envia.
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-Cupom Favorito <nao-responda@impulsiodigital.com>}
+    networks:
+      - cupom_net
+      - easypanel
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=easypanel
+      - traefik.http.routers.cupom-favorito-api.rule=Host(`${API_HOST}`)
+      - traefik.http.routers.cupom-favorito-api.entrypoints=https
+      - traefik.http.routers.cupom-favorito-api.tls.certresolver=letsencrypt
+      - traefik.http.services.cupom-favorito-api.loadbalancer.server.port=4200
+
+volumes:
+  cupom_pg:
+
+networks:
+  cupom_net:
+  easypanel:
+    external: true

@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, StyleSheet, Platform, Linking } from 'react-native';
+import { View, StyleSheet, Platform, Linking, AppState } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -12,7 +12,13 @@ import {
 } from '@expo-google-fonts/geist';
 import { GeistMono_400Regular, GeistMono_500Medium } from '@expo-google-fonts/geist-mono';
 import { AppNavigator } from './src/navigation/AppNavigator';
-import { getPreferencia, initDatabase, setPreferencia } from './src/services/database/database';
+import {
+  aoAlterarDados,
+  getPreferencia,
+  initDatabase,
+  setPreferencia,
+} from './src/services/database/database';
+import { agendarSincronizacao, carregarConta, sincronizar } from './src/services/sync/contaService';
 import { Botao, Card, Logo, Texto } from './src/components/ui';
 import { AberturaAnimada } from './src/components/AberturaAnimada';
 import { Tutorial } from './src/components/Tutorial';
@@ -55,6 +61,12 @@ const Conteudo: React.FC = () => {
       if (Platform.OS !== 'web') {
         await initDatabase();
         setMostrarTutorial((await getPreferencia(PREF_TUTORIAL)) === null);
+        // Sincroniza em segundo plano; sem conta ou sem internet, o app segue normal
+        carregarConta()
+          .then(conta => {
+            if (conta.conectado) return sincronizar();
+          })
+          .catch(error => console.warn('Não foi possível carregar a conta:', error));
         console.log('App inicializado com sucesso');
       } else {
         console.log('Modo web - banco de dados não inicializado');
@@ -70,6 +82,18 @@ const Conteudo: React.FC = () => {
   useEffect(() => {
     initializeApp();
   }, [initializeApp]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const pararDeOuvir = aoAlterarDados(() => agendarSincronizacao());
+    const assinatura = AppState.addEventListener('change', estadoApp => {
+      if (estadoApp === 'active') agendarSincronizacao(0);
+    });
+    return () => {
+      pararDeOuvir();
+      assinatura.remove();
+    };
+  }, []);
 
   // Se as fontes falharem, o app segue com as fontes do sistema
   const fontesProntas = fontesCarregadas || erroFontes !== null;

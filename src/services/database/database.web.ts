@@ -1,5 +1,6 @@
 import {
   AlertaEnviado,
+  AlteracaoSync,
   CupomData,
   EstabelecimentoData,
   FiltroData,
@@ -58,3 +59,13 @@ export const registrarAlertasEnviados = async (
   _alertas: Array<Omit<AlertaEnviado, 'id' | 'enviadoEm'>>
 ): Promise<void> => bancoMobile();
 export const carregarApelidos = async (): Promise<Map<string, string>> => bancoMobile();
+export const removerPreferencia = async (_chave: string): Promise<void> => bancoMobile();
+export const aoAlterarDados =
+  (_ouvinte: () => void): (() => void) =>
+  () => {};
+export const enfileirarTudo = async (): Promise<void> => bancoMobile();
+export const limparFilaSync = async (): Promise<void> => bancoMobile();
+export const lerPendentes = async (_limite = 500): Promise<AlteracaoSync[]> => bancoMobile();
+export const confirmarEnviados = async (_enviados: AlteracaoSync[]): Promise<void> => bancoMobile();
+export const aplicarAlteracoesRemotas = async (_alteracoes: AlteracaoSync[]): Promise<number> =>
+  bancoMobile();

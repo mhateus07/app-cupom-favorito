@@ -15,6 +15,7 @@ export type RootStackParamList = {
   ShoppingList: undefined;
   ProdutosMonitorados: { produto?: string } | undefined;
   RevisarCupom: { cupom: CupomData };
+  Conta: undefined;
   Scan: undefined;
 };
 
