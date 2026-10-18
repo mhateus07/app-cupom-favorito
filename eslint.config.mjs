@@ -53,6 +53,7 @@ export default [
   {
     ignores: [
       'node_modules/**',
+      'server/**',
       '.expo/**',
       'dist/**',
       'build/**',

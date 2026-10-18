@@ -11,6 +11,7 @@ import { ProductComparisonScreen } from '../screens/ProductComparisonScreen';
 import { ShoppingListScreen } from '../screens/ShoppingListScreen';
 import { ProdutosMonitoradosScreen } from '../screens/ProdutosMonitoradosScreen';
 import { RevisarCupomScreen } from '../screens/RevisarCupomScreen';
+import { ContaScreen } from '../screens/ContaScreen';
 import { RootStackParamList, TabParamList } from './types';
 import { TabBar } from './TabBar';
 import { useTema } from '../theme';
@@ -48,6 +49,7 @@ export const AppNavigator = () => {
         <RootStack.Screen name="ProductComparison" component={ProductComparisonScreen} />
         <RootStack.Screen name="ShoppingList" component={ShoppingListScreen} />
         <RootStack.Screen name="ProdutosMonitorados" component={ProdutosMonitoradosScreen} />
+        <RootStack.Screen name="Conta" component={ContaScreen} />
         <RootStack.Screen
           name="RevisarCupom"
           component={RevisarCupomScreen}

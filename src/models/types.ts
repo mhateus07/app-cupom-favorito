@@ -187,3 +187,15 @@ export interface CestaMercado {
   distancia?: number;
   economia?: number;
 }
+
+// Sincronização com a conta
+
+export type TipoSync = 'cupom' | 'item_lista' | 'monitorado' | 'apelido';
+
+export interface AlteracaoSync {
+  tipo: TipoSync;
+  chave: string;
+  dados: unknown;
+  excluido: boolean;
+  atualizadoEm: string;
+}

@@ -247,6 +247,16 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
           </Pressable>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Abrir conta e sincronização"
+            onPress={() => navigation.navigate('Conta')}
+            style={({ pressed }) => [styles.acaoTopo, pressed && { opacity: 0.65 }]}
+          >
+            <Texto variante="label" cor={cores.textMuted}>
+              Conta
+            </Texto>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
             accessibilityLabel="Exportar cupons"
             onPress={exportar}
             style={({ pressed }) => [styles.acaoTopo, pressed && { opacity: 0.65 }]}
