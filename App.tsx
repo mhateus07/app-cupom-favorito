@@ -14,11 +14,14 @@ import { GeistMono_400Regular, GeistMono_500Medium } from '@expo-google-fonts/ge
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { initDatabase } from './src/services/database/database';
 import { Botao, Card, Logo, Texto } from './src/components/ui';
-import { TemaProvider, space, useTema } from './src/theme';
+import { AberturaAnimada } from './src/components/AberturaAnimada';
+import { TemaProvider, colors, space, useTema } from './src/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
   // Sem splash nativo (ex.: web)
 });
+// O splash some rápido: a abertura animada começa no mesmo fundo Tinta
+SplashScreen.setOptions({ duration: 200, fade: true });
 
 const Mensagem: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { cores } = useTema();
@@ -33,6 +36,7 @@ const Conteudo: React.FC = () => {
   const { cores } = useTema();
   const [isReady, setIsReady] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [mostrarAbertura, setMostrarAbertura] = useState(Platform.OS !== 'web');
   const [fontesCarregadas, erroFontes] = useFonts({
     Geist_400Regular,
     Geist_500Medium,
@@ -72,8 +76,10 @@ const Conteudo: React.FC = () => {
   }, [isReady, fontesProntas]);
 
   if (!isReady || !fontesProntas) {
-    return <View style={{ flex: 1, backgroundColor: cores.background }} />;
+    return <View style={styles.carregando} />;
   }
+
+  const abertura = mostrarAbertura && <AberturaAnimada onFim={() => setMostrarAbertura(false)} />;
 
   if (dbError) {
     return (
@@ -113,7 +119,13 @@ const Conteudo: React.FC = () => {
     );
   }
 
-  return <AppNavigator />;
+  // O app já é montado por baixo da abertura, para estar pronto quando ela sair
+  return (
+    <View style={styles.app}>
+      <AppNavigator />
+      {abertura}
+    </View>
+  );
 };
 
 export default function App() {
@@ -128,6 +140,13 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  carregando: {
+    flex: 1,
+    backgroundColor: colors.tinta,
+  },
+  app: {
+    flex: 1,
+  },
   mensagem: {
     flex: 1,
     justifyContent: 'center',

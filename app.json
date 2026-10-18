@@ -19,7 +19,6 @@
         "backgroundColor": "#0F1412"
       },
       "permissions": ["android.permission.CAMERA"],
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.mkteuscr7.app_cupom_favorito"
     },
@@ -40,8 +39,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-icon.png",
-          "imageWidth": 160,
+          "image": "./assets/splash-fundo.png",
+          "imageWidth": 1,
           "resizeMode": "contain",
           "backgroundColor": "#0F1412"
         }

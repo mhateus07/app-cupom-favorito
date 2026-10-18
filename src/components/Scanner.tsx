@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.tinta,
   },
   escurecer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(15, 20, 18, 0.35)',
   },
   topo: {
