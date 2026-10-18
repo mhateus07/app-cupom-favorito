@@ -311,3 +311,37 @@ Node.js indisponíveis no React Native).
 ---
 
 **Última atualização:** Outubro 2026
+
+## Provedor configurável para produção
+
+O aplicativo consulta o portal público da SEFAZ por padrão. Para produção, uma API comercial ou um backend próprio pode ser conectado sem alterar o parser: `consultarNFCe` aceita um `provider` que implemente `NfceProvider`.
+
+O provedor recebe a URL do QR Code, a chave de acesso e o `AbortSignal`. A resposta deve conter `success: true` e pelo menos um destes campos:
+
+- `xmlContent`: XML da NFC-e, preferencialmente o XML autorizado;
+- `htmlContent`: HTML da consulta, caso o fornecedor não entregue XML.
+
+Exemplo de adaptação (o endpoint, autenticação e contrato ficam sob responsabilidade do backend):
+
+```ts
+const provider: NfceProvider = {
+  nome: 'Backend NFC-e da empresa',
+  consultar: async ({ chaveAcesso, signal }) => {
+    const resposta = await axios.get(`${BACKEND_URL}/consulta`, {
+      params: { chaveAcesso },
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      signal,
+    });
+
+    return {
+      success: true,
+      xmlContent: resposta.data.xml,
+      chaveAcesso,
+    };
+  },
+};
+
+const cupom = await obterDadosCupom(chave, qrCode, { provider });
+```
+
+Não existe endpoint ou credencial fixa no aplicativo. Isso evita expor segredo no bundle e permite trocar o fornecedor depois, mantendo o mesmo fluxo de extração e validação dos produtos.

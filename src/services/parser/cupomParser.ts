@@ -1,5 +1,5 @@
 import { CupomData, ProdutoData, EstabelecimentoData } from '../../models/types';
-import { consultarNFCe } from '../sefaz/sefazService';
+import { consultarNFCe, ConsultarNfceOptions } from '../sefaz/sefazService';
 import {
   NFCeData,
   extractNFCeData,
@@ -110,8 +110,12 @@ export const extrairDadosNFCe = (conteudo: {
  * Lança CupomIndisponivelError quando não for possível obter dados reais —
  * nunca devolve dados inventados.
  */
-export const obterDadosCupom = async (chaveAcesso: string, url: string): Promise<CupomData> => {
-  const resultado = await consultarNFCe(url, chaveAcesso);
+export const obterDadosCupom = async (
+  chaveAcesso: string,
+  url: string,
+  options?: ConsultarNfceOptions
+): Promise<CupomData> => {
+  const resultado = await consultarNFCe(url, chaveAcesso, options);
 
   if (!resultado.success) {
     throw new CupomIndisponivelError(
@@ -160,6 +164,7 @@ export const convertNFCeDataToCupomData = (
       nome: normalizeProdutoNome(p.nome),
       codigo: gtin || p.codigo,
       gtin,
+      unidade: p.unidade || undefined,
       preco: p.valorUnitario,
       quantidade: p.quantidade,
       desconto: p.desconto,

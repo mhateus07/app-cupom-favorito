@@ -6,18 +6,25 @@ import {
   RefreshControl,
   Pressable,
   ActivityIndicator,
+  Alert,
+  Share as NativeShare,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Scan } from 'phosphor-react-native';
-import { getAllCupons } from '../services/database/database';
+import { getAllCupons, importarCupons } from '../services/database/database';
 import { resumoDoUltimoMes } from '../services/analytics/analyticsService';
 import { CupomData } from '../models/types';
 import { TabScreenProps } from '../navigation/types';
 import { useEspacoTabBar } from '../navigation/TabBar';
-import { Botao, FundoStatusBar, Logo, Selo, Simbolo, Texto } from '../components/ui';
+import { Botao, CampoTexto, FundoStatusBar, Logo, Selo, Simbolo, Texto } from '../components/ui';
 import { colors, radius, space, useTema } from '../theme';
 import { formatarDiaMes, formatarMes, formatarValor, iniciais } from '../utils/formatacao';
+import { gerarBackupJson, gerarCsvCupons, lerBackupJson } from '../services/export/exportService';
+import { compartilharRelatorioPdf } from '../services/export/pdfService';
 
 export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }) => {
   const { cores, escuro } = useTema();
@@ -26,13 +33,22 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
   const [cupons, setCupons] = useState<CupomData[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [termo, setTermo] = useState('');
+  const [mercadoFiltro, setMercadoFiltro] = useState<string | null>(null);
+  const [mostrarFiltros, setMostrarFiltros] = useState(false);
+  const [dataInicio, setDataInicio] = useState('');
+  const [dataFim, setDataFim] = useState('');
+  const [valorMaximo, setValorMaximo] = useState('');
 
   const loadCupons = useCallback(async () => {
     try {
+      setErro(null);
       const data = await getAllCupons();
       setCupons(data);
     } catch (error) {
       console.error('Erro ao carregar cupons:', error);
+      setErro('Não foi possível carregar seus cupons.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -47,12 +63,118 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
 
   const resumo = useMemo(() => resumoDoUltimoMes(cupons), [cupons]);
 
+  const mercados = useMemo(
+    () => Array.from(new Set(cupons.map(cupom => cupom.estabelecimento.nome))).sort(),
+    [cupons]
+  );
+
+  const cuponsVisiveis = useMemo(() => {
+    const busca = termo.trim().toLocaleLowerCase('pt-BR');
+    const limite = Number(valorMaximo.replace(',', '.'));
+    return cupons.filter(cupom => {
+      const pertenceAoMercado = !mercadoFiltro || cupom.estabelecimento.nome === mercadoFiltro;
+      if (!pertenceAoMercado) return false;
+      if (dataInicio && cupom.data < dataInicio) return false;
+      if (dataFim && cupom.data > dataFim) return false;
+      if (valorMaximo.trim() && Number.isFinite(limite) && cupom.total > limite) return false;
+      if (!busca) return true;
+      return (
+        cupom.estabelecimento.nome.toLocaleLowerCase('pt-BR').includes(busca) ||
+        cupom.produtos.some(produto => produto.nome.toLocaleLowerCase('pt-BR').includes(busca))
+      );
+    });
+  }, [cupons, dataFim, dataInicio, mercadoFiltro, termo, valorMaximo]);
+
   const onRefresh = () => {
     setRefreshing(true);
     loadCupons();
   };
 
   const abrirScanner = () => navigation.navigate('Scan');
+
+  const compartilhar = async (
+    conteudo: string,
+    titulo: string,
+    nomeArquivo: string,
+    mimeType: string
+  ) => {
+    try {
+      if (FileSystem.cacheDirectory) {
+        const uri = `${FileSystem.cacheDirectory}${nomeArquivo}`;
+        await FileSystem.writeAsStringAsync(uri, conteudo, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(uri, { mimeType, dialogTitle: titulo });
+          return;
+        }
+      }
+      await NativeShare.share({ message: conteudo, title: titulo });
+    } catch (error) {
+      Alert.alert('Não foi possível exportar', 'Tente novamente em alguns instantes.');
+      console.error('Erro ao exportar dados:', error);
+    }
+  };
+
+  const restaurarBackup = async () => {
+    try {
+      const resultado = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true,
+      });
+      if (resultado.canceled || !resultado.assets?.[0]) return;
+      const conteudo = await FileSystem.readAsStringAsync(resultado.assets[0].uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const resultadoImportacao = await importarCupons(lerBackupJson(conteudo));
+      await loadCupons();
+      Alert.alert(
+        'Backup restaurado',
+        `${resultadoImportacao.importados} cupons importados. ${resultadoImportacao.ignorados} já existiam e foram ignorados.`
+      );
+    } catch (error) {
+      console.error('Erro ao restaurar backup:', error);
+      Alert.alert('Backup inválido', 'Escolha um arquivo JSON exportado pelo Cupom Favorito.');
+    }
+  };
+
+  const exportar = () => {
+    Alert.alert('Exportar dados', 'Escolha o formato do arquivo', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'CSV',
+        onPress: () =>
+          compartilhar(
+            gerarCsvCupons(cupons),
+            'Cupons Favorito CSV',
+            'cupons-favorito.csv',
+            'text/csv'
+          ),
+      },
+      {
+        text: 'Backup JSON',
+        onPress: () =>
+          compartilhar(
+            gerarBackupJson(cupons),
+            'Backup Cupom Favorito',
+            'cupom-favorito-backup.json',
+            'application/json'
+          ),
+      },
+      {
+        text: 'Relatório PDF',
+        onPress: async () => {
+          try {
+            await compartilharRelatorioPdf(cupons);
+          } catch (error) {
+            console.error('Erro ao gerar PDF:', error);
+            Alert.alert('Não foi possível gerar o PDF', 'Tente novamente em alguns instantes.');
+          }
+        },
+      },
+      { text: 'Restaurar backup', onPress: restaurarBackup },
+    ]);
+  };
 
   const renderCupomItem = ({ item }: { item: CupomData }) => (
     <Pressable
@@ -102,6 +224,28 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
     <View>
       <View style={styles.topo}>
         <Logo />
+        <View style={styles.acoesTopo}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Abrir lista de compras"
+            onPress={() => navigation.navigate('ShoppingList')}
+            style={({ pressed }) => [styles.acaoTopo, pressed && { opacity: 0.65 }]}
+          >
+            <Texto variante="label" cor={cores.textMuted}>
+              Lista
+            </Texto>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Exportar cupons"
+            onPress={exportar}
+            style={({ pressed }) => [styles.acaoTopo, pressed && { opacity: 0.65 }]}
+          >
+            <Texto variante="label" cor={cores.textMuted}>
+              Exportar
+            </Texto>
+          </Pressable>
+        </View>
       </View>
 
       {resumo && (
@@ -146,6 +290,88 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
           Mais recentes
         </Texto>
       </View>
+      <CampoTexto
+        value={termo}
+        onChangeText={setTermo}
+        placeholder="Buscar mercado ou produto"
+        returnKeyType="search"
+        accessibilityLabel="Buscar cupons"
+      />
+      <Pressable
+        onPress={() => setMostrarFiltros(valor => !valor)}
+        style={styles.abrirFiltros}
+        accessibilityRole="button"
+      >
+        <Texto variante="label" cor={cores.textMuted}>
+          {mostrarFiltros ? 'Ocultar filtros' : 'Filtros avançados'}
+        </Texto>
+      </Pressable>
+      {mostrarFiltros && (
+        <View style={styles.filtrosAvancados}>
+          <CampoTexto
+            rotulo="Data inicial"
+            value={dataInicio}
+            onChangeText={setDataInicio}
+            placeholder="AAAA-MM-DD"
+            autoCapitalize="none"
+          />
+          <CampoTexto
+            rotulo="Data final"
+            value={dataFim}
+            onChangeText={setDataFim}
+            placeholder="AAAA-MM-DD"
+            autoCapitalize="none"
+          />
+          <CampoTexto
+            rotulo="Valor máximo"
+            value={valorMaximo}
+            onChangeText={setValorMaximo}
+            placeholder="R$ 0,00"
+            keyboardType="decimal-pad"
+          />
+          <Pressable
+            onPress={() => {
+              setDataInicio('');
+              setDataFim('');
+              setValorMaximo('');
+            }}
+          >
+            <Texto variante="label" cor={cores.danger}>
+              Limpar filtros
+            </Texto>
+          </Pressable>
+        </View>
+      )}
+      {mercados.length > 1 && (
+        <View style={styles.filtrosMercado}>
+          <Pressable
+            onPress={() => setMercadoFiltro(null)}
+            style={[styles.filtro, !mercadoFiltro && { backgroundColor: cores.inverse }]}
+          >
+            <Texto variante="small" cor={!mercadoFiltro ? cores.onInverse : cores.textMuted}>
+              Todos
+            </Texto>
+          </Pressable>
+          {mercados.map(mercado => {
+            const ativo = mercadoFiltro === mercado;
+            return (
+              <Pressable
+                key={mercado}
+                onPress={() => setMercadoFiltro(ativo ? null : mercado)}
+                style={[styles.filtro, ativo && { backgroundColor: cores.inverse }]}
+              >
+                <Texto
+                  variante="small"
+                  cor={ativo ? cores.onInverse : cores.textMuted}
+                  numberOfLines={1}
+                >
+                  {mercado}
+                </Texto>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 
@@ -153,6 +379,27 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
     return (
       <View style={[styles.centro, { backgroundColor: cores.background }]}>
         <ActivityIndicator color={cores.text} />
+      </View>
+    );
+  }
+
+  if (erro) {
+    return (
+      <View
+        style={[
+          styles.container,
+          styles.erro,
+          { backgroundColor: cores.background, paddingTop: insets.top + space.lg },
+        ]}
+      >
+        <View style={styles.topo}>
+          <Logo />
+        </View>
+        <Texto variante="title">Algo deu errado</Texto>
+        <Texto cor={cores.textMuted} style={styles.vazioTexto}>
+          {erro}
+        </Texto>
+        <Botao titulo="Tentar novamente" onPress={loadCupons} />
       </View>
     );
   }
@@ -191,7 +438,7 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
   return (
     <View style={[styles.container, styles.semMargem, { backgroundColor: cores.background }]}>
       <FlatList
-        data={cupons}
+        data={cuponsVisiveis}
         renderItem={renderCupomItem}
         keyExtractor={item => String(item.id ?? item.chaveAcesso)}
         ListHeaderComponent={cabecalho}
@@ -203,6 +450,11 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
         }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={cores.text} />
+        }
+        ListEmptyComponent={
+          <View style={styles.semResultado}>
+            <Texto cor={cores.textMuted}>Nenhum cupom corresponde à busca.</Texto>
+          </View>
         }
       />
       <FundoStatusBar />
@@ -224,9 +476,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   topo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     height: 52,
-    justifyContent: 'center',
     marginBottom: space.xl,
+  },
+  acaoTopo: {
+    paddingVertical: space.sm,
+    paddingHorizontal: space.sm,
+  },
+  acoesTopo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
   },
   resumo: {
     borderRadius: radius.card,
@@ -298,5 +561,37 @@ const styles = StyleSheet.create({
   },
   vazioBotao: {
     alignSelf: 'stretch',
+  },
+  erro: {
+    justifyContent: 'center',
+  },
+  filtrosMercado: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+    marginTop: space.md,
+    marginBottom: space.sm,
+  },
+  abrirFiltros: {
+    alignSelf: 'flex-start',
+    paddingVertical: space.sm,
+  },
+  filtrosAvancados: {
+    gap: space.md,
+    padding: space.lg,
+    borderWidth: 1,
+    borderColor: colors.bobina,
+    borderRadius: radius.card,
+    marginBottom: space.md,
+  },
+  filtro: {
+    maxWidth: 180,
+    borderRadius: radius.tag,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
+  semResultado: {
+    alignItems: 'center',
+    paddingVertical: space.xxl,
   },
 });

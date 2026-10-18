@@ -10,6 +10,8 @@ export type TabParamList = {
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList>;
   CupomDetail: { cupomId: number };
+  ProductComparison: { produto: string };
+  ShoppingList: undefined;
   Scan: undefined;
 };
 

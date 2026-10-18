@@ -5,8 +5,10 @@ import {
   gerarResumoGeral,
   produtosComMaiorVariacao,
   resumoDoUltimoMes,
+  analisarGastosMensais,
+  calcularCestaPorMercado,
 } from '../src/services/analytics/analyticsService';
-import { CupomData, ProdutoData } from '../src/models/types';
+import { CupomData, ItemListaCompra, ProdutoData } from '../src/models/types';
 
 let seq = 0;
 
@@ -144,5 +146,36 @@ describe('resumoDoUltimoMes', () => {
     ];
     expect(resumoDoUltimoMes(cupons)).toMatchObject({ quantidade: 2, gasto: 50 });
     expect(resumoDoUltimoMes([])).toBeNull();
+  });
+});
+
+describe('analisarGastosMensais', () => {
+  it('agrega gastos e descontos por mês em ordem decrescente', () => {
+    const cupons = [
+      cupom('A', 'A', [produto('Arroz', 20)], '2026-09-30'),
+      cupom('A', 'A', [produto('Arroz', 30)], '2026-10-02'),
+    ];
+    expect(analisarGastosMensais(cupons)).toEqual([
+      expect.objectContaining({ referencia: '2026-10', gasto: 30, cupons: 1 }),
+      expect.objectContaining({ referencia: '2026-09', gasto: 20, cupons: 1 }),
+    ]);
+  });
+});
+
+describe('calcularCestaPorMercado', () => {
+  it('estima a cesta pelo menor preço histórico de cada mercado', () => {
+    const cupons = [
+      cupom('A', 'Mercado A', [produto('Arroz', 20, 1, ARROZ), produto('Feijão', 8)]),
+      cupom('B', 'Mercado B', [produto('Arroz', 18, 1, ARROZ), produto('Feijão', 10)]),
+    ];
+    const itens: ItemListaCompra[] = [
+      { id: 1, listaId: 1, nome: 'Arroz', quantidade: 2, comprado: false },
+      { id: 2, listaId: 1, nome: 'Feijão', quantidade: 1, comprado: false },
+    ];
+
+    expect(calcularCestaPorMercado(itens, cupons)).toMatchObject([
+      { estabelecimento: 'Mercado B', totalEstimado: 46, itensEncontrados: 2 },
+      { estabelecimento: 'Mercado A', totalEstimado: 48, itensEncontrados: 2, economia: 2 },
+    ]);
   });
 });

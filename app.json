@@ -35,6 +35,13 @@
         }
       ],
       "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "O Cupom Favorito usa sua localização para mostrar mercados próximos."
+        }
+      ],
+      "expo-notifications",
       "expo-font",
       [
         "expo-splash-screen",
