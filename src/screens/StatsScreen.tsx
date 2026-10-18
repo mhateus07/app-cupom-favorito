@@ -1,29 +1,96 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, ScrollView, StyleSheet, RefreshControl } from 'react-native';
-import { Text, Card, Divider, ActivityIndicator, List } from 'react-native-paper';
+import React, { useState, useCallback, useMemo } from 'react';
+import { View, ScrollView, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getAllCupons } from '../services/database/database';
 import {
   gerarResumoGeral,
   analisarEstabelecimentos,
   analisarProdutos,
   gerarRecomendacoes,
-  formatarMoeda,
 } from '../services/analytics/analyticsService';
-import { CupomData } from '../models/types';
+import { CupomData, EstabelecimentoEstatistica } from '../models/types';
+import { useEspacoTabBar } from '../navigation/TabBar';
+import { Card, FundoStatusBar, LinhaTracejada, Selo, Texto } from '../components/ui';
+import { colors, radius, space, useTema } from '../theme';
+import { formatarValor } from '../utils/formatacao';
+
+/** Diferença percentual em relação à média: 0.89 → -11 */
+const diferencaPercentual = (indice: number): number => Math.round((indice - 1) * 100);
+
+const LinhaRanking: React.FC<{
+  posicao: number;
+  est: EstabelecimentoEstatistica;
+  maiorIndice: number;
+}> = ({ posicao, est, maiorIndice }) => {
+  const { cores } = useTema();
+  const diferenca = est.indicePreco === null ? null : diferencaPercentual(est.indicePreco);
+
+  let rotulo = 'sem dados';
+  let corRotulo = cores.textMuted;
+  let corBarra = cores.border;
+  if (diferenca !== null && diferenca < 0) {
+    rotulo = `−${-diferenca}%`;
+    corRotulo = cores.saving;
+    corBarra = colors.lima;
+  } else if (diferenca !== null && diferenca > 0) {
+    rotulo = `+${diferenca}%`;
+    corRotulo = cores.danger;
+    corBarra = cores.dangerFill;
+  } else if (diferenca === 0) {
+    rotulo = 'na média';
+    corRotulo = cores.text;
+    corBarra = cores.textMuted;
+  }
+
+  // Barra proporcional ao preço relativo: quanto mais barato, mais curta
+  const preenchimento = est.indicePreco === null ? 0 : est.indicePreco / maiorIndice;
+
+  return (
+    <View style={[styles.ranking, { backgroundColor: cores.surface, borderColor: cores.border }]}>
+      <View style={styles.rankingLinha}>
+        <Texto
+          variante="numberSmall"
+          cor={
+            posicao === 1 && diferenca !== null && diferenca < 0 ? cores.saving : cores.textMuted
+          }
+        >
+          {String(posicao).padStart(2, '0')}
+        </Texto>
+        <Texto forte style={styles.rankingNome} numberOfLines={1}>
+          {est.nome}
+        </Texto>
+        <Texto variante="numberSmall" cor={corRotulo}>
+          {rotulo}
+        </Texto>
+      </View>
+      <View style={[styles.trilho, { backgroundColor: cores.border }]}>
+        <View
+          style={[
+            styles.barra,
+            { backgroundColor: corBarra, width: `${Math.round(preenchimento * 100)}%` },
+          ]}
+        />
+      </View>
+      <Texto variante="small" cor={cores.textMuted}>
+        {est.quantidadeCompras} {est.quantidadeCompras === 1 ? 'compra' : 'compras'}
+        {est.indicePreco === null
+          ? ' · nenhum produto em comum com outros mercados'
+          : ` · ${est.produtosComparados} ${est.produtosComparados === 1 ? 'produto comparado' : 'produtos comparados'}`}
+      </Texto>
+    </View>
+  );
+};
 
 export const StatsScreen: React.FC = () => {
+  const { cores } = useTema();
+  const insets = useSafeAreaInsets();
+  const espacoTabBar = useEspacoTabBar();
   const [cupons, setCupons] = useState<CupomData[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const data = await getAllCupons();
       setCupons(data);
@@ -33,7 +100,23 @@ export const StatsScreen: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
+
+  const analise = useMemo(
+    () => ({
+      resumo: gerarResumoGeral(cupons),
+      estabelecimentos: analisarEstabelecimentos(cupons),
+      produtos: analisarProdutos(cupons),
+      recomendacoes: gerarRecomendacoes(cupons),
+    }),
+    [cupons]
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -42,249 +125,278 @@ export const StatsScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" />
+      <View style={[styles.centro, { backgroundColor: cores.background }]}>
+        <ActivityIndicator color={cores.text} />
       </View>
     );
   }
 
-  if (cupons.length === 0) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Text variant="headlineSmall" style={styles.emptyText}>
-          Sem dados para análise
-        </Text>
-        <Text variant="bodyMedium" style={styles.emptySubtext}>
-          Escaneie alguns cupons para ver estatísticas
-        </Text>
-      </View>
-    );
-  }
-
-  const resumo = gerarResumoGeral(cupons);
-  const estabelecimentos = analisarEstabelecimentos(cupons);
-  const produtos = analisarProdutos(cupons);
-  const recomendacoes = gerarRecomendacoes(cupons);
+  const { resumo, estabelecimentos, produtos, recomendacoes } = analise;
+  const recomendado = recomendacoes[0];
+  const maiorIndice = Math.max(1, ...estabelecimentos.map(e => e.indicePreco ?? 0));
 
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      {/* Resumo Geral */}
-      <Card style={styles.card}>
-        <Card.Title title="Resumo Geral" />
-        <Card.Content>
-          <View style={styles.statRow}>
-            <Text variant="bodyMedium">Total de Cupons:</Text>
-            <Text variant="titleMedium" style={styles.statValue}>
-              {resumo.totalCupons}
-            </Text>
+    <View style={{ flex: 1, backgroundColor: cores.background }}>
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: space.screen,
+          paddingTop: insets.top + space.xl,
+          paddingBottom: espacoTabBar,
+        }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={cores.text} />
+        }
+      >
+        <Texto variante="label" cor={cores.textMuted}>
+          Análises · {resumo.totalCupons} {resumo.totalCupons === 1 ? 'cupom' : 'cupons'}
+        </Texto>
+        <Texto variante="display" style={styles.titulo}>
+          Onde comprar
+        </Texto>
+
+        {cupons.length === 0 ? (
+          <Card>
+            <Texto>Escaneie alguns cupons para ver onde cada produto sai mais barato.</Texto>
+          </Card>
+        ) : recomendado ? (
+          <View style={styles.recomendado}>
+            <View style={styles.recomendadoTopo}>
+              <Texto variante="label" cor={colors.tinta}>
+                Recomendado
+              </Texto>
+              <Selo variante="destaque" texto={`SCORE ${recomendado.score}`} />
+            </View>
+            <Texto variante="title" cor={colors.tinta} style={styles.recomendadoNome}>
+              {recomendado.estabelecimento}
+            </Texto>
+            <LinhaTracejada cor={colors.tinta} style={styles.recomendadoLinha} />
+            <View style={styles.recomendadoRodape}>
+              <Texto cor={colors.tinta} style={styles.recomendadoRazoes}>
+                {recomendado.razoes[0]}
+              </Texto>
+              {recomendado.economiaEstimada > 0 && (
+                <Texto variante="numberLarge" cor={colors.tinta} style={styles.recomendadoEconomia}>
+                  −R$ {formatarValor(recomendado.economiaEstimada)}
+                </Texto>
+              )}
+            </View>
+            {recomendado.razoes.length > 1 && (
+              <Texto variante="small" cor={colors.tinta} style={styles.recomendadoExtras}>
+                {recomendado.razoes.slice(1).join(' · ')}
+              </Texto>
+            )}
           </View>
+        ) : (
+          <Card>
+            <Texto forte>Ainda não dá para comparar</Texto>
+            <Texto cor={cores.textMuted} style={styles.paragrafo}>
+              Compre o mesmo produto em pelo menos dois mercados diferentes e a gente mostra qual
+              sai mais barato.
+            </Texto>
+          </Card>
+        )}
 
-          <View style={styles.statRow}>
-            <Text variant="bodyMedium">Total Gasto:</Text>
-            <Text variant="titleMedium" style={styles.statValue}>
-              {formatarMoeda(resumo.totalGasto)}
-            </Text>
-          </View>
+        {estabelecimentos.length > 0 && (
+          <>
+            <View style={styles.secao}>
+              <Texto variante="subtitle">Ranking de mercados</Texto>
+              <Texto variante="label" cor={cores.textMuted}>
+                Índice de preço
+              </Texto>
+            </View>
+            <View style={styles.lista}>
+              {estabelecimentos.slice(0, 5).map((est, index) => (
+                <LinhaRanking
+                  key={est.cnpj}
+                  posicao={index + 1}
+                  est={est}
+                  maiorIndice={maiorIndice}
+                />
+              ))}
+            </View>
+            <Texto variante="small" cor={cores.textMuted} style={styles.nota}>
+              Comparando os mesmos produtos (pelo código de barras, ou pelo nome quando não há
+              código) entre os mercados onde você comprou.
+            </Texto>
+          </>
+        )}
 
-          <View style={styles.statRow}>
-            <Text variant="bodyMedium">Economia com Descontos:</Text>
-            <Text variant="titleMedium" style={[styles.statValue, styles.economiaText]}>
-              {formatarMoeda(resumo.economiaComDescontos)}
-            </Text>
-          </View>
+        {cupons.length > 0 && (
+          <>
+            <View style={styles.secao}>
+              <Texto variante="subtitle">Resumo</Texto>
+            </View>
+            <Card style={styles.cardLista}>
+              {[
+                ['Total gasto', `R$ ${formatarValor(resumo.totalGasto)}`, cores.text],
+                [
+                  'Economia com descontos',
+                  `R$ ${formatarValor(resumo.economiaComDescontos)}`,
+                  resumo.economiaComDescontos > 0 ? cores.saving : cores.text,
+                ],
+                ['Mercado favorito', resumo.mercadoFavorito, cores.text],
+                ['Mais comprado', resumo.produtoMaisComprado, cores.text],
+              ].map(([rotulo, valor, cor], index) => (
+                <View
+                  key={rotulo}
+                  style={[
+                    styles.linhaResumo,
+                    index > 0 && { borderTopWidth: 1, borderTopColor: cores.border },
+                  ]}
+                >
+                  <Texto cor={cores.textMuted}>{rotulo}</Texto>
+                  <Texto
+                    variante={index < 2 ? 'numberSmall' : 'body'}
+                    forte={index >= 2}
+                    cor={cor}
+                    numberOfLines={1}
+                    style={styles.valorResumo}
+                  >
+                    {valor}
+                  </Texto>
+                </View>
+              ))}
+            </Card>
 
-          <Divider style={styles.divider} />
-
-          <View style={styles.statRow}>
-            <Text variant="bodyMedium">Mercado Favorito:</Text>
-            <Text variant="bodyMedium" style={styles.statValue}>
-              {resumo.mercadoFavorito}
-            </Text>
-          </View>
-
-          <View style={styles.statRow}>
-            <Text variant="bodyMedium">Produto Mais Comprado:</Text>
-            <Text variant="bodyMedium" style={styles.statValue}>
-              {resumo.produtoMaisComprado}
-            </Text>
-          </View>
-        </Card.Content>
-      </Card>
-
-      {/* Recomendações */}
-      <Card style={styles.card}>
-        <Card.Title title="Onde Comprar?" />
-        <Card.Content>
-          {recomendacoes.slice(0, 3).map((rec, index) => (
-            <View key={index}>
-              <List.Item
-                title={rec.estabelecimento}
-                description={rec.razoes.join(' • ')}
-                left={props => (
-                  <View style={styles.scoreContainer}>
-                    <Text variant="titleLarge" style={styles.scoreText}>
-                      {rec.score}
-                    </Text>
+            <View style={styles.secao}>
+              <Texto variante="subtitle">Produtos mais comprados</Texto>
+              <Texto variante="label" cor={cores.textMuted}>
+                Preço médio
+              </Texto>
+            </View>
+            <Card style={styles.cardLista}>
+              {produtos.slice(0, 5).map((prod, index) => (
+                <View
+                  key={prod.chave}
+                  style={[
+                    styles.linhaProduto,
+                    index > 0 && { borderTopWidth: 1, borderTopColor: cores.border },
+                  ]}
+                >
+                  <View style={styles.produtoInfo}>
+                    <Texto forte numberOfLines={1}>
+                      {prod.nome}
+                    </Texto>
+                    <Texto variante="small" cor={cores.textMuted} numberOfLines={1}>
+                      {prod.quantidadeCompras}× · mais barato em {prod.estabelecimentoMaisBarato}
+                    </Texto>
                   </View>
-                )}
-                right={props =>
-                  rec.economiaEstimada > 0 ? (
-                    <Text variant="bodySmall" style={styles.economiaText}>
-                      Economize ~{formatarMoeda(rec.economiaEstimada)}
-                    </Text>
-                  ) : null
-                }
-              />
-              {index < 2 && <Divider />}
-            </View>
-          ))}
-        </Card.Content>
-      </Card>
-
-      {/* Ranking de Mercados */}
-      <Card style={styles.card}>
-        <Card.Title title="Ranking de Mercados" subtitle="Ordenado por preço médio" />
-        <Card.Content>
-          {estabelecimentos.slice(0, 5).map((est, index) => (
-            <View key={index}>
-              <View style={styles.rankingItem}>
-                <View style={styles.rankingPosition}>
-                  <Text variant="titleLarge">{index + 1}º</Text>
+                  <Texto variante="numberSmall">{formatarValor(prod.precoMedio)}</Texto>
                 </View>
-                <View style={styles.rankingInfo}>
-                  <Text variant="bodyLarge" style={styles.rankingNome}>
-                    {est.nome}
-                  </Text>
-                  <Text variant="bodySmall" style={styles.rankingDetalhes}>
-                    {est.quantidadeCompras} compras • Desconto médio:{' '}
-                    {formatarMoeda(est.descontoMedio)}
-                  </Text>
-                </View>
-                <View style={styles.rankingPreco}>
-                  <Text variant="titleMedium">{formatarMoeda(est.precoMedioTotal)}</Text>
-                  <Text variant="bodySmall" style={styles.precoLabel}>
-                    média
-                  </Text>
-                </View>
-              </View>
-              {index < Math.min(estabelecimentos.length - 1, 4) && <Divider style={styles.divider} />}
-            </View>
-          ))}
-        </Card.Content>
-      </Card>
-
-      {/* Top Produtos */}
-      <Card style={styles.card}>
-        <Card.Title title="Produtos Mais Comprados" />
-        <Card.Content>
-          {produtos.slice(0, 5).map((prod, index) => (
-            <View key={index}>
-              <List.Item
-                title={prod.nome}
-                description={`Comprado ${prod.quantidadeCompras}x • Mais barato em ${prod.estabelecimentoMaisBarato}`}
-                right={props => (
-                  <View style={styles.produtoPrecos}>
-                    <Text variant="bodyMedium">{formatarMoeda(prod.precoMedio)}</Text>
-                    <Text variant="bodySmall" style={styles.precoLabel}>
-                      média
-                    </Text>
-                  </View>
-                )}
-              />
-              {index < Math.min(produtos.length - 1, 4) && <Divider />}
-            </View>
-          ))}
-        </Card.Content>
-      </Card>
-    </ScrollView>
+              ))}
+            </Card>
+          </>
+        )}
+      </ScrollView>
+      <FundoStatusBar />
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  loadingContainer: {
+  centro: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+  titulo: {
+    marginTop: space.sm,
+    marginBottom: space.xl,
   },
-  emptyText: {
-    marginBottom: 10,
-    textAlign: 'center',
+  paragrafo: {
+    marginTop: space.xs,
   },
-  emptySubtext: {
-    color: '#666',
-    textAlign: 'center',
+  recomendado: {
+    backgroundColor: colors.lima,
+    borderRadius: radius.card,
+    padding: space.xl,
   },
-  card: {
-    margin: 10,
-    elevation: 2,
-  },
-  statRow: {
+  recomendadoTopo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 5,
-  },
-  statValue: {
-    fontWeight: 'bold',
-  },
-  economiaText: {
-    color: '#2e7d32',
-  },
-  divider: {
-    marginVertical: 10,
-  },
-  scoreContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#e3f2fd',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
   },
-  scoreText: {
-    fontWeight: 'bold',
-    color: '#1976d2',
+  recomendadoNome: {
+    marginTop: space.lg,
   },
-  rankingItem: {
+  recomendadoLinha: {
+    marginVertical: space.lg,
+  },
+  recomendadoRodape: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: space.lg,
+  },
+  recomendadoRazoes: {
+    flex: 1,
+  },
+  recomendadoExtras: {
+    marginTop: space.md,
+    opacity: 0.75,
+  },
+  recomendadoEconomia: {
+    fontSize: 28,
+    lineHeight: 34,
+  },
+  secao: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginTop: space.xxl,
+    marginBottom: space.lg,
+  },
+  lista: {
+    gap: space.md,
+  },
+  ranking: {
+    borderWidth: 1,
+    borderRadius: radius.card,
+    padding: space.lg,
+    gap: space.md,
+  },
+  rankingLinha: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-  },
-  rankingPosition: {
-    width: 40,
-    alignItems: 'center',
-  },
-  rankingInfo: {
-    flex: 1,
-    marginLeft: 10,
+    gap: space.lg,
   },
   rankingNome: {
-    fontWeight: '500',
-    marginBottom: 3,
+    flex: 1,
   },
-  rankingDetalhes: {
-    color: '#666',
+  trilho: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
   },
-  rankingPreco: {
-    alignItems: 'flex-end',
+  barra: {
+    height: 6,
+    borderRadius: 3,
   },
-  precoLabel: {
-    color: '#888',
+  nota: {
+    marginTop: space.lg,
   },
-  produtoPrecos: {
-    alignItems: 'flex-end',
+  cardLista: {
+    paddingVertical: space.xs,
+    paddingHorizontal: space.lg,
+  },
+  linhaResumo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: space.lg,
+    paddingVertical: space.md,
+  },
+  valorResumo: {
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  linhaProduto: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.lg,
+    paddingVertical: space.md,
+  },
+  produtoInfo: {
+    flex: 1,
+    gap: 2,
   },
 });

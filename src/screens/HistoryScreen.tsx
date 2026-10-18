@@ -1,27 +1,33 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, FlatList, StyleSheet, RefreshControl } from 'react-native';
-import { Text, Card, FAB, ActivityIndicator, Chip } from 'react-native-paper';
+import React, { useState, useCallback, useMemo } from 'react';
+import {
+  View,
+  FlatList,
+  StyleSheet,
+  RefreshControl,
+  Pressable,
+  ActivityIndicator,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Scan } from 'phosphor-react-native';
 import { getAllCupons } from '../services/database/database';
+import { resumoDoUltimoMes } from '../services/analytics/analyticsService';
 import { CupomData } from '../models/types';
-import { formatarMoeda, formatarData } from '../services/analytics/analyticsService';
+import { TabScreenProps } from '../navigation/types';
+import { useEspacoTabBar } from '../navigation/TabBar';
+import { Botao, FundoStatusBar, Logo, Selo, Simbolo, Texto } from '../components/ui';
+import { colors, radius, space, useTema } from '../theme';
+import { formatarDiaMes, formatarMes, formatarValor, iniciais } from '../utils/formatacao';
 
-interface HistoryScreenProps {
-  navigation: any;
-}
-
-export const HistoryScreen: React.FC<HistoryScreenProps> = ({ navigation }) => {
+export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }) => {
+  const { cores, escuro } = useTema();
+  const insets = useSafeAreaInsets();
+  const espacoTabBar = useEspacoTabBar();
   const [cupons, setCupons] = useState<CupomData[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadCupons();
-    }, [])
-  );
-
-  const loadCupons = async () => {
+  const loadCupons = useCallback(async () => {
     try {
       const data = await getAllCupons();
       setCupons(data);
@@ -31,92 +37,175 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ navigation }) => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCupons();
+    }, [loadCupons])
+  );
+
+  const resumo = useMemo(() => resumoDoUltimoMes(cupons), [cupons]);
 
   const onRefresh = () => {
     setRefreshing(true);
     loadCupons();
   };
 
-  const handleCupomPress = (cupomId: number) => {
-    navigation.navigate('CupomDetail', { cupomId });
-  };
+  const abrirScanner = () => navigation.navigate('Scan');
 
   const renderCupomItem = ({ item }: { item: CupomData }) => (
-    <Card style={styles.card} onPress={() => handleCupomPress(item.id!)}>
-      <Card.Content>
-        <View style={styles.cardHeader}>
-          <Text variant="titleLarge" style={styles.estabelecimentoNome}>
-            {item.estabelecimento.nome}
-          </Text>
-          <Text variant="titleMedium" style={styles.total}>
-            {formatarMoeda(item.total)}
-          </Text>
-        </View>
+    <Pressable
+      onPress={() =>
+        item.id !== undefined && navigation.navigate('CupomDetail', { cupomId: item.id })
+      }
+      style={({ pressed }) => [
+        styles.cupom,
+        { backgroundColor: cores.surface, borderColor: cores.border },
+        pressed && { opacity: 0.7 },
+      ]}
+    >
+      <View style={[styles.iniciais, { backgroundColor: cores.surfaceMuted }]}>
+        <Texto variante="numberSmall" style={styles.iniciaisTexto}>
+          {iniciais(item.estabelecimento.nome)}
+        </Texto>
+      </View>
 
-        <View style={styles.cardInfo}>
-          <Text variant="bodyMedium" style={styles.data}>
-            {formatarData(item.data)}
-          </Text>
-          <Text variant="bodySmall" style={styles.quantidadeItens}>
-            {item.produtos.length} {item.produtos.length === 1 ? 'item' : 'itens'}
-          </Text>
-        </View>
+      <View style={styles.cupomInfo}>
+        <Texto forte numberOfLines={1}>
+          {item.estabelecimento.nome}
+        </Texto>
+        <Texto variante="label" cor={cores.textMuted}>
+          {formatarDiaMes(item.data)} · {item.produtos.length}{' '}
+          {item.produtos.length === 1 ? 'item' : 'itens'}
+        </Texto>
+      </View>
 
-        {item.descontoTotal > 0 && (
-          <Chip mode="outlined" style={styles.descontoChip} compact>
-            Economia: {formatarMoeda(item.descontoTotal)}
-          </Chip>
+      <View style={styles.cupomValores}>
+        <Texto variante="number" style={styles.valor}>
+          {formatarValor(item.total)}
+        </Texto>
+        {item.descontoTotal > 0 ? (
+          <Texto variante="numberSmall" cor={cores.saving}>
+            −{formatarValor(item.descontoTotal)}
+          </Texto>
+        ) : (
+          <Texto variante="numberSmall" cor={cores.textMuted}>
+            sem desc.
+          </Texto>
         )}
+      </View>
+    </Pressable>
+  );
 
-        <Text variant="bodySmall" style={styles.formaPagamento}>
-          {item.formaPagamento}
-        </Text>
-      </Card.Content>
-    </Card>
+  const cabecalho = (
+    <View>
+      <View style={styles.topo}>
+        <Logo />
+      </View>
+
+      {resumo && (
+        <View style={[styles.resumo, { backgroundColor: cores.inverse }]}>
+          <Texto variante="label" cor={cores.onInverseMuted}>
+            {formatarMes(resumo.referencia)} · {resumo.quantidade}{' '}
+            {resumo.quantidade === 1 ? 'cupom' : 'cupons'}
+          </Texto>
+          <View style={styles.resumoLinha}>
+            <View style={styles.resumoGasto}>
+              <Texto cor={cores.onInverseMuted}>Gasto no mês</Texto>
+              <Texto
+                variante="numberLarge"
+                cor={cores.onInverse}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                R$ {formatarValor(resumo.gasto)}
+              </Texto>
+            </View>
+            <View style={styles.resumoEconomia}>
+              <Texto cor={cores.onInverseMuted}>Economia</Texto>
+              {resumo.economia > 0 ? (
+                <Selo
+                  variante="economia"
+                  tamanho="grande"
+                  texto={`R$ ${formatarValor(resumo.economia)}`}
+                />
+              ) : (
+                <Texto variante="numberSmall" cor={cores.onInverseMuted}>
+                  sem descontos
+                </Texto>
+              )}
+            </View>
+          </View>
+        </View>
+      )}
+
+      <View style={styles.secao}>
+        <Texto variante="title">Seus cupons</Texto>
+        <Texto variante="label" cor={cores.textMuted}>
+          Mais recentes
+        </Texto>
+      </View>
+    </View>
   );
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" />
+      <View style={[styles.centro, { backgroundColor: cores.background }]}>
+        <ActivityIndicator color={cores.text} />
       </View>
     );
   }
 
   if (cupons.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <Text variant="headlineSmall" style={styles.emptyText}>
-          Nenhum cupom escaneado ainda
-        </Text>
-        <Text variant="bodyMedium" style={styles.emptySubtext}>
-          Toque no botão + para escanear seu primeiro cupom
-        </Text>
-        <FAB
-          icon="barcode-scan"
-          style={styles.fab}
-          onPress={() => navigation.navigate('Scan')}
-          label="Escanear Cupom"
-        />
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: cores.background, paddingTop: insets.top + space.lg },
+        ]}
+      >
+        <View style={styles.topo}>
+          <Logo />
+        </View>
+        <View style={[styles.vazio, { paddingBottom: espacoTabBar }]}>
+          <Simbolo tamanho={88} variante={escuro ? 'papel' : 'tinta'} />
+          <Texto variante="title" style={styles.vazioTitulo}>
+            Nenhum cupom ainda
+          </Texto>
+          <Texto cor={cores.textMuted} style={styles.vazioTexto}>
+            Escaneie o QR Code do rodapé de um cupom fiscal. A gente lê os itens e mostra onde cada
+            produto sai mais barato.
+          </Texto>
+          <Botao
+            titulo="Escanear cupom"
+            icone={<Scan size={20} color={colors.tinta} weight="bold" />}
+            onPress={abrirScanner}
+            style={styles.vazioBotao}
+          />
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, styles.semMargem, { backgroundColor: cores.background }]}>
       <FlatList
         data={cupons}
         renderItem={renderCupomItem}
-        keyExtractor={item => item.id!.toString()}
-        contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        keyExtractor={item => String(item.id ?? item.chaveAcesso)}
+        ListHeaderComponent={cabecalho}
+        ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
+        contentContainerStyle={{
+          paddingHorizontal: space.screen,
+          paddingTop: insets.top + space.lg,
+          paddingBottom: espacoTabBar,
+        }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={cores.text} />
+        }
       />
-      <FAB
-        icon="barcode-scan"
-        style={styles.fab}
-        onPress={() => navigation.navigate('Scan')}
-      />
+      <FundoStatusBar />
     </View>
   );
 };
@@ -124,74 +213,90 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    paddingHorizontal: space.screen,
   },
-  loadingContainer: {
+  semMargem: {
+    paddingHorizontal: 0,
+  },
+  centro: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  emptyContainer: {
-    flex: 1,
+  topo: {
+    height: 52,
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    marginBottom: space.xl,
   },
-  emptyText: {
-    marginBottom: 10,
-    textAlign: 'center',
+  resumo: {
+    borderRadius: radius.card,
+    padding: space.xl,
+    gap: space.lg,
   },
-  emptySubtext: {
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 30,
-  },
-  listContent: {
-    padding: 10,
-  },
-  card: {
-    marginBottom: 10,
-    elevation: 2,
-  },
-  cardHeader: {
+  resumoLinha: {
     flexDirection: 'row',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
+    gap: space.lg,
   },
-  estabelecimentoNome: {
+  resumoGasto: {
     flex: 1,
-    fontWeight: 'bold',
-    marginRight: 10,
+    gap: space.xs,
   },
-  total: {
-    fontWeight: 'bold',
-    color: '#2e7d32',
+  resumoEconomia: {
+    alignItems: 'flex-end',
+    gap: space.sm,
   },
-  cardInfo: {
+  secao: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    alignItems: 'baseline',
+    marginTop: space.xxl,
+    marginBottom: space.lg,
   },
-  data: {
-    color: '#666',
+  cupom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.lg,
+    borderWidth: 1,
+    borderRadius: radius.card,
+    padding: space.lg,
   },
-  quantidadeItens: {
-    color: '#666',
+  iniciais: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  descontoChip: {
-    alignSelf: 'flex-start',
-    marginVertical: 5,
-    backgroundColor: '#e8f5e9',
+  iniciaisTexto: {
+    letterSpacing: 0,
   },
-  formaPagamento: {
-    color: '#888',
-    marginTop: 5,
+  cupomInfo: {
+    flex: 1,
+    gap: 2,
   },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
+  cupomValores: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
+  valor: {
+    fontSize: 18,
+  },
+  vazio: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vazioTitulo: {
+    marginTop: space.xl,
+    marginBottom: space.sm,
+  },
+  vazioTexto: {
+    textAlign: 'center',
+    marginBottom: space.xl,
+  },
+  vazioBotao: {
+    alignSelf: 'stretch',
   },
 });

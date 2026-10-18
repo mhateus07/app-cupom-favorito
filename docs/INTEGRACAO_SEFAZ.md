@@ -264,14 +264,22 @@ A chave de acesso possui **44 dígitos** e contém informações codificadas:
 Para o **App Cupom Favorito**, vamos usar uma **abordagem híbrida**:
 
 ### Fase 1: Extração de dados do QR Code ✅
-- Extrair chave de acesso do QR Code
-- Decodificar informações básicas da chave
-- Identificar UF e estabelecimento
+- Extrair chave de acesso do QR Code (parâmetro `p`, QR Code v2 e v3)
+- Validar o dígito verificador (módulo 11) da chave
+- Identificar UF e CNPJ do emitente a partir da chave
 
-### Fase 2: Consulta simplificada (Atual)
-- Fazer requisição HTTP para URL do QR Code
-- Tentar extrair dados básicos via parsing HTML
-- Fallback para dados mockados se falhar
+### Fase 2: Consulta simplificada ✅ (atual)
+- Requisição HTTP para a URL do QR Code (`src/services/sefaz/sefazService.ts`)
+- Se a resposta trouxer o XML (`nfeProc`), ele é lido com `fast-xml-parser`, mantendo
+  todos os valores como texto para não perder zeros à esquerda (CNPJ, GTIN, CEP)
+- Senão, o HTML é lido no layout padrão da consulta pública (tabela `tabResult`,
+  classes `txtTit`, `RCod`, `Rqtd`, `RvlUnit`, `valor`, `totalNumb`), usado pela maioria
+  das SEFAZ (`src/services/sefaz/nfceExtractor.ts`)
+- **Se nada disso funcionar, o cupom não é salvo** e o usuário vê o motivo. O app nunca
+  grava dados fictícios.
+
+Limitações conhecidas: portais com CAPTCHA ou com layout próprio (ex.: MG) ainda não são
+lidos. O HTML só informa o desconto total da nota, não o desconto de cada item.
 
 ### Fase 3: Integração com API comercial (Futuro)
 - Integrar com Webmania ou Focus NFE
@@ -284,9 +292,11 @@ Para o **App Cupom Favorito**, vamos usar uma **abordagem híbrida**:
 
 ```bash
 npm install fast-xml-parser       # Parser de XML
-npm install cheerio              # Parser de HTML (scraping)
 npm install axios                # Cliente HTTP
 ```
+
+O HTML é lido com expressões regulares próprias (sem `cheerio`, que depende de APIs do
+Node.js indisponíveis no React Native).
 
 ---
 
@@ -300,4 +310,4 @@ npm install axios                # Cliente HTTP
 
 ---
 
-**Última atualização:** Janeiro 2025
+**Última atualização:** Outubro 2026

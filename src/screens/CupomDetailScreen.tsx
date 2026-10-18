@@ -1,253 +1,279 @@
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
-import { Text, Card, Divider, ActivityIndicator, Chip } from 'react-native-paper';
+import { View, ScrollView, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CaretLeft } from 'phosphor-react-native';
 import { getCupomById } from '../services/database/database';
 import { CupomData } from '../models/types';
-import { formatarMoeda, formatarData } from '../services/analytics/analyticsService';
+import { RootScreenProps } from '../navigation/types';
+import { formatarCNPJ, formatarQuantidade } from '../services/analytics/analyticsService';
+import { Card, LinhaTracejada, Selo, Serrilha, Texto } from '../components/ui';
+import { radius, space, useTema } from '../theme';
+import {
+  formatarChaveAcesso,
+  formatarDiaMes,
+  formatarHora,
+  formatarValor,
+} from '../utils/formatacao';
 
-interface CupomDetailScreenProps {
-  route: any;
-  navigation: any;
-}
-
-export const CupomDetailScreen: React.FC<CupomDetailScreenProps> = ({ route }) => {
+export const CupomDetailScreen: React.FC<RootScreenProps<'CupomDetail'>> = ({
+  route,
+  navigation,
+}) => {
   const { cupomId } = route.params;
+  const { cores } = useTema();
+  const insets = useSafeAreaInsets();
   const [cupom, setCupom] = useState<CupomData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const loadCupom = async () => {
+      try {
+        const data = await getCupomById(cupomId);
+        setCupom(data);
+      } catch (error) {
+        console.error('Erro ao carregar cupom:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     loadCupom();
   }, [cupomId]);
 
-  const loadCupom = async () => {
-    try {
-      const data = await getCupomById(cupomId);
-      setCupom(data);
-    } catch (error) {
-      console.error('Erro ao carregar cupom:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const voltar = () =>
+    navigation.canGoBack()
+      ? navigation.goBack()
+      : navigation.navigate('Tabs', { screen: 'Cupons' });
 
-  if (loading) {
+  const barraTopo = (
+    <View style={[styles.topo, { paddingTop: insets.top + space.sm }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Voltar"
+        onPress={voltar}
+        style={[styles.botaoTopo, { backgroundColor: cores.surface, borderColor: cores.border }]}
+      >
+        <CaretLeft size={22} color={cores.text} />
+      </Pressable>
+      <Texto variante="label" cor={cores.textMuted}>
+        Cupom fiscal
+      </Texto>
+      <View style={styles.botaoTopoEspaco} />
+    </View>
+  );
+
+  if (loading || !cupom) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" />
+      <View style={[styles.container, { backgroundColor: cores.background }]}>
+        {barraTopo}
+        <View style={styles.centro}>
+          {loading ? (
+            <ActivityIndicator color={cores.text} />
+          ) : (
+            <Texto cor={cores.textMuted}>Cupom não encontrado</Texto>
+          )}
+        </View>
       </View>
     );
   }
 
-  if (!cupom) {
-    return (
-      <View style={styles.container}>
-        <Text>Cupom não encontrado</Text>
-      </View>
-    );
-  }
+  const hora = formatarHora(cupom.data);
+  const itens = `${cupom.produtos.length} ${cupom.produtos.length === 1 ? 'item' : 'itens'}`;
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Cabeçalho - Estabelecimento */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text variant="headlineSmall" style={styles.estabelecimentoNome}>
-            {cupom.estabelecimento.nome}
-          </Text>
-          <Text variant="bodyMedium" style={styles.estabelecimentoInfo}>
-            CNPJ: {cupom.estabelecimento.cnpj}
-          </Text>
-          {cupom.estabelecimento.endereco && (
-            <Text variant="bodySmall" style={styles.estabelecimentoInfo}>
-              {cupom.estabelecimento.endereco}
-              {cupom.estabelecimento.cidade && `, ${cupom.estabelecimento.cidade}`}
-              {cupom.estabelecimento.estado && ` - ${cupom.estabelecimento.estado}`}
-            </Text>
-          )}
-        </Card.Content>
-      </Card>
-
-      {/* Informações do Cupom */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <View style={styles.infoRow}>
-            <Text variant="bodyMedium">Data:</Text>
-            <Text variant="bodyMedium" style={styles.infoValue}>
-              {formatarData(cupom.data)}
-            </Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text variant="bodyMedium">Forma de Pagamento:</Text>
-            <Text variant="bodyMedium" style={styles.infoValue}>
-              {cupom.formaPagamento}
-            </Text>
-          </View>
-        </Card.Content>
-      </Card>
-
-      {/* Lista de Produtos */}
-      <Card style={styles.card}>
-        <Card.Title title="Produtos" />
-        <Card.Content>
-          {cupom.produtos.map((produto, index) => (
-            <View key={index}>
-              <View style={styles.produtoItem}>
-                <View style={styles.produtoInfo}>
-                  <Text variant="bodyLarge" style={styles.produtoNome}>
-                    {produto.nome}
-                  </Text>
-                  <Text variant="bodySmall" style={styles.produtoCodigo}>
-                    Cód: {produto.codigo}
-                  </Text>
-                  <Text variant="bodySmall">
-                    {produto.quantidade} x {formatarMoeda(produto.preco)}
-                  </Text>
-                </View>
-                <View style={styles.produtoPreco}>
-                  {produto.desconto > 0 && (
-                    <Chip mode="outlined" style={styles.descontoChip} compact>
-                      -{formatarMoeda(produto.desconto)}
-                    </Chip>
-                  )}
-                  <Text variant="titleMedium" style={styles.precoFinal}>
-                    {formatarMoeda(produto.precoFinal)}
-                  </Text>
-                </View>
+    <View style={[styles.container, { backgroundColor: cores.background }]}>
+      {barraTopo}
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: space.screen,
+          paddingBottom: insets.bottom + space.xxl,
+        }}
+      >
+        {/* O cupom, como na bobina */}
+        <View>
+          <View style={[styles.bobina, { backgroundColor: cores.surface }]}>
+            <View style={styles.cabecalho}>
+              <View style={styles.cabecalhoTexto}>
+                <Texto variante="title">{cupom.estabelecimento.nome}</Texto>
+                <Texto variante="label" cor={cores.textMuted}>
+                  {[formatarDiaMes(cupom.data), hora, itens].filter(Boolean).join(' · ')}
+                </Texto>
               </View>
-              {index < cupom.produtos.length - 1 && <Divider style={styles.divider} />}
+              {cupom.descontoTotal > 0 && (
+                <Selo variante="economia" texto={`−R$ ${formatarValor(cupom.descontoTotal)}`} />
+              )}
             </View>
-          ))}
-        </Card.Content>
-      </Card>
 
-      {/* Totais */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <View style={styles.totalRow}>
-            <Text variant="bodyLarge">Subtotal:</Text>
-            <Text variant="bodyLarge">{formatarMoeda(cupom.subtotal)}</Text>
-          </View>
+            <LinhaTracejada style={styles.tracejado} />
 
-          {cupom.descontoTotal > 0 && (
-            <View style={styles.totalRow}>
-              <Text variant="bodyLarge" style={styles.descontoText}>
-                Descontos:
-              </Text>
-              <Text variant="bodyLarge" style={styles.descontoText}>
-                -{formatarMoeda(cupom.descontoTotal)}
-              </Text>
+            {cupom.produtos.map((produto, index) => (
+              <View key={produto.id ?? index} style={styles.item}>
+                <View style={styles.itemLinha}>
+                  <Texto variante="receipt" style={styles.itemNome}>
+                    {produto.nome.toUpperCase()}
+                  </Texto>
+                  <Texto variante="receipt">{formatarValor(produto.precoFinal)}</Texto>
+                </View>
+                {(produto.quantidade !== 1 || produto.desconto > 0) && (
+                  <View style={styles.itemLinha}>
+                    <Texto variante="numberSmall" cor={cores.textMuted} style={styles.itemDetalhe}>
+                      {formatarQuantidade(produto.quantidade)} × {formatarValor(produto.preco)}
+                    </Texto>
+                    {produto.desconto > 0 && (
+                      <Texto variante="numberSmall" cor={cores.saving} style={styles.itemDetalhe}>
+                        −{formatarValor(produto.desconto)}
+                      </Texto>
+                    )}
+                  </View>
+                )}
+              </View>
+            ))}
+
+            <LinhaTracejada style={styles.tracejado} />
+
+            {cupom.descontoTotal > 0 && (
+              <>
+                <View style={styles.itemLinha}>
+                  <Texto variante="label" cor={cores.textMuted}>
+                    Subtotal
+                  </Texto>
+                  <Texto variante="receipt">{formatarValor(cupom.subtotal)}</Texto>
+                </View>
+                <View style={[styles.itemLinha, styles.linhaDesconto]}>
+                  <Texto variante="label" cor={cores.textMuted}>
+                    Descontos
+                  </Texto>
+                  <Texto variante="receipt" cor={cores.saving}>
+                    −{formatarValor(cupom.descontoTotal)}
+                  </Texto>
+                </View>
+              </>
+            )}
+
+            <View style={[styles.itemLinha, styles.total]}>
+              <Texto variante="label" cor={cores.textMuted}>
+                Total
+              </Texto>
+              <Texto variante="numberLarge">R$ {formatarValor(cupom.total)}</Texto>
             </View>
-          )}
-
-          <Divider style={styles.divider} />
-
-          <View style={styles.totalRow}>
-            <Text variant="headlineSmall" style={styles.totalLabel}>
-              Total:
-            </Text>
-            <Text variant="headlineSmall" style={styles.totalValue}>
-              {formatarMoeda(cupom.total)}
-            </Text>
           </View>
-        </Card.Content>
-      </Card>
+          <Serrilha cor={cores.surface} />
+        </View>
 
-      {/* Chave de Acesso */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Text variant="bodySmall" style={styles.chaveLabel}>
-            Chave de Acesso:
-          </Text>
-          <Text variant="bodySmall" style={styles.chaveAcesso}>
-            {cupom.chaveAcesso}
-          </Text>
-        </Card.Content>
-      </Card>
-    </ScrollView>
+        {/* Dados da nota */}
+        <Card style={styles.dados}>
+          {[
+            ['CNPJ', formatarCNPJ(cupom.estabelecimento.cnpj)],
+            [
+              'Endereço',
+              [
+                cupom.estabelecimento.endereco,
+                cupom.estabelecimento.cidade,
+                cupom.estabelecimento.estado,
+              ]
+                .filter(Boolean)
+                .join(', '),
+            ],
+            ['Pagamento', cupom.formaPagamento],
+            ['Chave de acesso', formatarChaveAcesso(cupom.chaveAcesso)],
+          ]
+            .filter(([, valor]) => valor)
+            .map(([rotulo, valor], index) => (
+              <View
+                key={rotulo}
+                style={[
+                  styles.dado,
+                  index > 0 && { borderTopWidth: 1, borderTopColor: cores.border },
+                ]}
+              >
+                <Texto variante="label" cor={cores.textMuted}>
+                  {rotulo}
+                </Texto>
+                <Texto variante={rotulo === 'Chave de acesso' ? 'numberSmall' : 'body'}>
+                  {valor}
+                </Texto>
+              </View>
+            ))}
+        </Card>
+      </ScrollView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
-  loadingContainer: {
+  centro: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  card: {
-    margin: 10,
-    elevation: 2,
+  topo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.screen,
+    paddingBottom: space.lg,
   },
-  estabelecimentoNome: {
-    fontWeight: 'bold',
-    marginBottom: 5,
+  botaoTopo: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.button,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  estabelecimentoInfo: {
-    color: '#666',
-    marginBottom: 3,
+  botaoTopoEspaco: {
+    width: 44,
   },
-  infoRow: {
+  bobina: {
+    borderTopLeftRadius: radius.card,
+    borderTopRightRadius: radius.card,
+    padding: space.xl,
+    paddingBottom: space.lg,
+  },
+  cabecalho: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.md,
+  },
+  cabecalhoTexto: {
+    flex: 1,
+    gap: space.xs,
+  },
+  tracejado: {
+    marginVertical: space.lg,
+  },
+  item: {
+    marginBottom: space.md,
+  },
+  itemLinha: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 5,
+    alignItems: 'baseline',
+    gap: space.lg,
   },
-  infoValue: {
-    fontWeight: 'bold',
-  },
-  produtoItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-  },
-  produtoInfo: {
+  itemNome: {
     flex: 1,
   },
-  produtoNome: {
-    fontWeight: '500',
-    marginBottom: 3,
+  itemDetalhe: {
+    fontSize: 12,
   },
-  produtoCodigo: {
-    color: '#888',
-    marginBottom: 3,
+  linhaDesconto: {
+    marginTop: space.xs,
   },
-  produtoPreco: {
-    alignItems: 'flex-end',
+  total: {
+    marginTop: space.md,
+    alignItems: 'center',
   },
-  descontoChip: {
-    marginBottom: 5,
-    backgroundColor: '#ffebee',
+  dados: {
+    marginTop: space.xl,
+    paddingVertical: space.xs,
+    paddingHorizontal: space.lg,
   },
-  precoFinal: {
-    fontWeight: 'bold',
-  },
-  divider: {
-    marginVertical: 5,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: 5,
-  },
-  descontoText: {
-    color: '#d32f2f',
-  },
-  totalLabel: {
-    fontWeight: 'bold',
-  },
-  totalValue: {
-    fontWeight: 'bold',
-    color: '#2e7d32',
-  },
-  chaveLabel: {
-    color: '#666',
-    marginBottom: 5,
-  },
-  chaveAcesso: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    color: '#888',
+  dado: {
+    paddingVertical: space.md,
+    gap: 2,
   },
 });

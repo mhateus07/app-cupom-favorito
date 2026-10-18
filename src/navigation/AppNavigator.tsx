@@ -1,86 +1,52 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, NavigationContainer, Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createStackNavigator } from '@react-navigation/stack';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { createStackNavigator, TransitionPresets } from '@react-navigation/stack';
 
-// Screens
 import { HistoryScreen } from '../screens/HistoryScreen';
 import { StatsScreen } from '../screens/StatsScreen';
 import { ScanScreen } from '../screens/ScanScreen';
 import { CupomDetailScreen } from '../screens/CupomDetailScreen';
+import { RootStackParamList, TabParamList } from './types';
+import { TabBar } from './TabBar';
+import { useTema } from '../theme';
 
-const Tab = createBottomTabNavigator();
-const Stack = createStackNavigator();
+const Tab = createBottomTabNavigator<TabParamList>();
+const RootStack = createStackNavigator<RootStackParamList>();
 
-// Stack Navigator para Histórico
-const HistoryStack = () => {
-  return (
-    <Stack.Navigator>
-      <Stack.Screen
-        name="HistoryList"
-        component={HistoryScreen}
-        options={{ title: 'Histórico de Cupons' }}
-      />
-      <Stack.Screen
-        name="CupomDetail"
-        component={CupomDetailScreen}
-        options={{ title: 'Detalhes do Cupom' }}
-      />
-      <Stack.Screen
-        name="Scan"
-        component={ScanScreen}
-        options={{
-          title: 'Escanear Cupom',
-          headerShown: false,
-        }}
-      />
-    </Stack.Navigator>
-  );
-};
+const Tabs = () => (
+  <Tab.Navigator tabBar={props => <TabBar {...props} />} screenOptions={{ headerShown: false }}>
+    <Tab.Screen name="Cupons" component={HistoryScreen} />
+    <Tab.Screen name="Analises" component={StatsScreen} />
+  </Tab.Navigator>
+);
 
-// Stack Navigator para Estatísticas
-const StatsStack = () => {
-  return (
-    <Stack.Navigator>
-      <Stack.Screen
-        name="StatsList"
-        component={StatsScreen}
-        options={{ title: 'Estatísticas' }}
-      />
-    </Stack.Navigator>
-  );
-};
-
-// Tab Navigator Principal
 export const AppNavigator = () => {
+  const { cores, escuro } = useTema();
+  const base = escuro ? DarkTheme : DefaultTheme;
+  const tema: Theme = {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: cores.text,
+      background: cores.background,
+      card: cores.background,
+      text: cores.text,
+      border: cores.border,
+    },
+  };
+
   return (
-    <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          tabBarIcon: ({ focused, color, size }) => {
-            let iconName: string = 'help';
-
-            if (route.name === 'History') {
-              iconName = focused ? 'receipt' : 'receipt-outline';
-            } else if (route.name === 'Stats') {
-              iconName = focused ? 'chart-box' : 'chart-box-outline';
-            }
-
-            return <MaterialCommunityIcons name={iconName as any} size={size} color={color} />;
-          },
-          tabBarActiveTintColor: '#6200ee',
-          tabBarInactiveTintColor: 'gray',
-          headerShown: false,
-        })}
-      >
-        <Tab.Screen
-          name="History"
-          component={HistoryStack}
-          options={{ title: 'Histórico' }}
+    <NavigationContainer theme={tema}>
+      <RootStack.Navigator screenOptions={{ headerShown: false }}>
+        <RootStack.Screen name="Tabs" component={Tabs} />
+        <RootStack.Screen name="CupomDetail" component={CupomDetailScreen} />
+        <RootStack.Screen
+          name="Scan"
+          component={ScanScreen}
+          options={{ ...TransitionPresets.ModalSlideFromBottomIOS, gestureEnabled: false }}
         />
-        <Tab.Screen name="Stats" component={StatsStack} options={{ title: 'Estatísticas' }} />
-      </Tab.Navigator>
+      </RootStack.Navigator>
     </NavigationContainer>
   );
 };

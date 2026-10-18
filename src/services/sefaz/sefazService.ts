@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { XMLParser } from 'fast-xml-parser';
 
 /**
  * Mapa de códigos UF para siglas de estados
@@ -68,25 +67,6 @@ const SEFAZ_URLS: { [key: string]: string } = {
   RR: 'https://www.sefaz.rr.gov.br/nfce/servlet/wp_consulta_nfce',
 };
 
-/**
- * Códigos de tipo de pagamento
- */
-const PAYMENT_TYPES: { [key: string]: string } = {
-  '01': 'Dinheiro',
-  '02': 'Cheque',
-  '03': 'Cartão de Crédito',
-  '04': 'Cartão de Débito',
-  '05': 'Crédito Loja',
-  '10': 'Vale Alimentação',
-  '11': 'Vale Refeição',
-  '12': 'Vale Presente',
-  '13': 'Vale Combustível',
-  '14': 'Duplicata Mercantil',
-  '15': 'Boleto Bancário',
-  '90': 'Sem Pagamento',
-  '99': 'Outros',
-};
-
 export interface SefazConsultaResult {
   success: boolean;
   xmlContent?: string;
@@ -116,201 +96,88 @@ export const getConsultaURL = (uf: string): string | null => {
 };
 
 /**
- * Consulta dados da NFCe na SEFAZ através do QR Code
+ * Baixa a página de consulta da NFC-e a partir da URL do QR Code.
  *
- * IMPORTANTE: Esta implementação tenta fazer requisição direta ao portal SEFAZ.
- * Limitações:
- * - Muitos portais possuem CAPTCHA
- * - Alguns portais bloqueiam requisições de apps mobile
- * - A estrutura HTML pode mudar
+ * O resultado pode conter o XML (raro) e/ou o HTML da consulta pública. Quem chama é
+ * responsável por extrair os dados — ver nfceExtractor.ts.
  *
- * Para produção, considere usar uma API comercial (Webmania, Focus NFE, etc.)
+ * Limitações conhecidas:
+ * - Alguns portais exigem CAPTCHA ou bloqueiam requisições fora do navegador
+ * - Alguns estados usam um layout de HTML próprio
+ *
+ * Para cobertura completa em produção, considere uma API comercial (Webmania, Focus NFe etc.).
  */
 export const consultarNFCe = async (
   qrCodeUrl: string,
   chaveAcesso: string
 ): Promise<SefazConsultaResult> => {
+  const uf = getUFFromChave(chaveAcesso);
+
+  if (!uf) {
+    return {
+      success: false,
+      error: 'Não foi possível identificar o estado (UF) da chave de acesso.',
+      chaveAcesso,
+    };
+  }
+
+  if (!/^https?:\/\//i.test(qrCodeUrl)) {
+    return {
+      success: false,
+      error: 'O QR Code não contém um endereço de consulta da SEFAZ.',
+      uf,
+      chaveAcesso,
+    };
+  }
+
   try {
-    const uf = getUFFromChave(chaveAcesso);
+    const response = await axios.get<string>(qrCodeUrl, {
+      timeout: 15000,
+      responseType: 'text',
+      // Mantém o corpo como texto, sem tentativa de parse JSON
+      transformResponse: [data => data],
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Mobile Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
 
-    if (!uf) {
+    const content = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+    const contentType = String(response.headers['content-type'] || '');
+
+    if (!content.trim()) {
       return {
         success: false,
-        error: 'Não foi possível identificar a UF da chave de acesso',
-        chaveAcesso,
-      };
-    }
-
-    // Tentar fazer requisição à URL do QR Code diretamente
-    console.log(`Consultando NFCe na SEFAZ/${uf}...`);
-    console.log(`URL: ${qrCodeUrl}`);
-
-    try {
-      const response = await axios.get(qrCodeUrl, {
-        timeout: 15000,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      });
-
-      // Verificar se retornou XML ou HTML
-      const contentType = response.headers['content-type'] || '';
-      const content = response.data;
-
-      if (contentType.includes('xml') || content.includes('<?xml')) {
-        // Retornou XML diretamente (raro, mas possível)
-        return {
-          success: true,
-          xmlContent: content,
-          uf,
-          chaveAcesso,
-        };
-      } else {
-        // Retornou HTML (padrão)
-        // Tentar extrair XML embutido no HTML
-        const xmlMatch = content.match(/<\?xml[\s\S]*<\/nfeProc>/);
-        if (xmlMatch) {
-          return {
-            success: true,
-            xmlContent: xmlMatch[0],
-            htmlContent: content,
-            uf,
-            chaveAcesso,
-          };
-        }
-
-        // Apenas HTML, sem XML
-        return {
-          success: true,
-          htmlContent: content,
-          uf,
-          chaveAcesso,
-        };
-      }
-    } catch (requestError) {
-      console.error('Erro na requisição à SEFAZ:', requestError);
-
-      return {
-        success: false,
-        error: `Erro ao consultar SEFAZ/${uf}: ${
-          requestError instanceof Error ? requestError.message : 'Erro desconhecido'
-        }`,
+        error: `A SEFAZ/${uf} retornou uma resposta vazia.`,
         uf,
         chaveAcesso,
       };
     }
-  } catch (error) {
+
+    if (contentType.includes('xml') || content.trimStart().startsWith('<?xml')) {
+      return { success: true, xmlContent: content, uf, chaveAcesso };
+    }
+
+    // Alguns portais embutem o XML completo dentro do HTML
+    const xmlMatch = content.match(/<nfeProc[\s\S]*<\/nfeProc>/);
+
+    return {
+      success: true,
+      xmlContent: xmlMatch?.[0],
+      htmlContent: content,
+      uf,
+      chaveAcesso,
+    };
+  } catch (requestError) {
+    console.error('Erro na requisição à SEFAZ:', requestError);
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Erro desconhecido',
+      error: `Não foi possível acessar a SEFAZ/${uf}: ${
+        requestError instanceof Error ? requestError.message : 'erro desconhecido'
+      }`,
+      uf,
       chaveAcesso,
     };
   }
-};
-
-/**
- * Parse XML da NFCe usando fast-xml-parser
- */
-export const parseXML = (xmlContent: string): any => {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    textNodeName: '#text',
-    parseAttributeValue: true,
-    parseTagValue: true,
-    trimValues: true,
-  });
-
-  return parser.parse(xmlContent);
-};
-
-/**
- * Extrai dados específicos do XML da NFCe
- */
-export const extractNFCeData = (parsedXML: any) => {
-  try {
-    // Navegação no XML pode variar, mas geralmente é:
-    // nfeProc -> NFe -> infNFe
-    const nfeProc = parsedXML.nfeProc || parsedXML;
-    const nfe = nfeProc.NFe || nfeProc.nfe || nfeProc;
-    const infNFe = nfe.infNFe || nfe.infNfe || nfe;
-
-    // Dados do emitente (estabelecimento)
-    const emit = infNFe.emit || {};
-    const enderEmit = emit.enderEmit || {};
-
-    // Dados gerais (IDE)
-    const ide = infNFe.ide || {};
-
-    // Produtos (det - pode ser array ou objeto único)
-    let detalhes = infNFe.det || [];
-    if (!Array.isArray(detalhes)) {
-      detalhes = [detalhes];
-    }
-
-    // Totais
-    const total = infNFe.total || {};
-    const icmsTot = total.ICMSTot || {};
-
-    // Pagamento
-    const pag = infNFe.pag || {};
-    let pagamentos = pag.detPag || [];
-    if (!Array.isArray(pagamentos)) {
-      pagamentos = [pagamentos];
-    }
-
-    return {
-      chaveAcesso: infNFe['@_Id']?.replace('NFe', '') || '',
-      numero: ide.nNF || '',
-      serie: ide.serie || '',
-      dataEmissao: ide.dhEmi || ide.dEmi || '',
-      emitente: {
-        cnpj: emit.CNPJ || emit.CPF || '',
-        nome: emit.xNome || '',
-        nomeFantasia: emit.xFant || emit.xNome || '',
-        endereco: `${enderEmit.xLgr || ''}, ${enderEmit.nro || ''}`,
-        bairro: enderEmit.xBairro || '',
-        cidade: enderEmit.xMun || '',
-        uf: enderEmit.UF || '',
-        cep: enderEmit.CEP || '',
-      },
-      produtos: detalhes.map((det: any) => {
-        const prod = det.prod || {};
-        return {
-          codigo: prod.cProd || '',
-          ean: prod.cEAN || '',
-          nome: prod.xProd || '',
-          ncm: prod.NCM || '',
-          unidade: prod.uCom || '',
-          quantidade: parseFloat(prod.qCom || '0'),
-          valorUnitario: parseFloat(prod.vUnCom || '0'),
-          valorTotal: parseFloat(prod.vProd || '0'),
-          desconto: parseFloat(prod.vDesc || '0'),
-        };
-      }),
-      totais: {
-        subtotal: parseFloat(icmsTot.vProd || '0'),
-        desconto: parseFloat(icmsTot.vDesc || '0'),
-        total: parseFloat(icmsTot.vNF || '0'),
-        icms: parseFloat(icmsTot.vICMS || '0'),
-      },
-      pagamentos: pagamentos.map((p: any) => ({
-        tipo: PAYMENT_TYPES[p.tPag] || 'Outros',
-        codigo: p.tPag || '',
-        valor: parseFloat(p.vPag || '0'),
-      })),
-    };
-  } catch (error) {
-    console.error('Erro ao extrair dados do XML:', error);
-    throw error;
-  }
-};
-
-/**
- * Converte código de tipo de pagamento para descrição
- */
-export const getPaymentDescription = (codigo: string): string => {
-  return PAYMENT_TYPES[codigo] || 'Outros';
 };

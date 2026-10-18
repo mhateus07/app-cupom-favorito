@@ -1,43 +1,43 @@
-import { useState, useEffect } from 'react';
-import { BarCodeScanner, BarCodeScannerResult } from 'expo-barcode-scanner';
+import { useCallback, useEffect, useRef } from 'react';
+import { BarcodeScanningResult, useCameraPermissions } from 'expo-camera';
 
 export interface ScannerHook {
   hasPermission: boolean | null;
-  scanned: boolean;
-  handleBarCodeScanned: (result: BarCodeScannerResult) => void;
+  canAskAgain: boolean;
+  requestPermission: () => Promise<unknown>;
+  handleBarcodeScanned: (result: BarcodeScanningResult) => void;
   resetScanner: () => void;
 }
 
-export const useScanner = (
-  onScan: (data: string, type: string) => void
-): ScannerHook => {
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [scanned, setScanned] = useState(false);
+export const useScanner = (onScan: (data: string, type: string) => void): ScannerHook => {
+  const [permission, requestPermission] = useCameraPermissions();
+  // A câmera dispara vários eventos por segundo; o ref garante uma leitura por vez
+  const scannedRef = useRef(false);
 
   useEffect(() => {
-    const requestPermission = async () => {
-      const { status } = await BarCodeScanner.requestPermissionsAsync();
-      setHasPermission(status === 'granted');
-    };
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [permission, requestPermission]);
 
-    requestPermission();
+  const handleBarcodeScanned = useCallback(
+    ({ type, data }: BarcodeScanningResult) => {
+      if (scannedRef.current) return;
+      scannedRef.current = true;
+      onScan(data, type);
+    },
+    [onScan]
+  );
+
+  const resetScanner = useCallback(() => {
+    scannedRef.current = false;
   }, []);
 
-  const handleBarCodeScanned = ({ type, data }: BarCodeScannerResult) => {
-    if (!scanned) {
-      setScanned(true);
-      onScan(data, type);
-    }
-  };
-
-  const resetScanner = () => {
-    setScanned(false);
-  };
-
   return {
-    hasPermission,
-    scanned,
-    handleBarCodeScanned,
+    hasPermission: permission ? permission.granted : null,
+    canAskAgain: permission?.canAskAgain ?? true,
+    requestPermission,
+    handleBarcodeScanned,
     resetScanner,
   };
 };

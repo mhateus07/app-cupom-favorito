@@ -1,19 +1,47 @@
 import 'react-native-gesture-handler';
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform, Text, Linking } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, StyleSheet, Platform, Linking } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Provider as PaperProvider, Button, Card } from 'react-native-paper';
+import * as SplashScreen from 'expo-splash-screen';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import {
+  useFonts,
+  Geist_400Regular,
+  Geist_500Medium,
+  Geist_600SemiBold,
+} from '@expo-google-fonts/geist';
+import { GeistMono_400Regular, GeistMono_500Medium } from '@expo-google-fonts/geist-mono';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { initDatabase } from './src/services/database/database';
+import { Botao, Card, Logo, Texto } from './src/components/ui';
+import { TemaProvider, space, useTema } from './src/theme';
 
-export default function App() {
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // Sem splash nativo (ex.: web)
+});
+
+const Mensagem: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { cores } = useTema();
+  return (
+    <View style={[styles.mensagem, { backgroundColor: cores.background }]}>
+      <Card style={styles.card}>{children}</Card>
+    </View>
+  );
+};
+
+const Conteudo: React.FC = () => {
+  const { cores } = useTema();
   const [isReady, setIsReady] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [fontesCarregadas, erroFontes] = useFonts({
+    Geist_400Regular,
+    Geist_500Medium,
+    Geist_600SemiBold,
+    GeistMono_400Regular,
+    GeistMono_500Medium,
+  });
 
-  useEffect(() => {
-    initializeApp();
-  }, []);
-
-  const initializeApp = async () => {
+  const initializeApp = useCallback(async () => {
     try {
       // Inicializar banco de dados apenas em plataformas mobile
       if (Platform.OS !== 'web') {
@@ -24,133 +52,97 @@ export default function App() {
       }
     } catch (error) {
       console.error('Erro ao inicializar app:', error);
+      setDbError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsReady(true);
     }
-  };
+  }, []);
 
-  if (!isReady) {
+  useEffect(() => {
+    initializeApp();
+  }, [initializeApp]);
+
+  // Se as fontes falharem, o app segue com as fontes do sistema
+  const fontesProntas = fontesCarregadas || erroFontes !== null;
+
+  useEffect(() => {
+    if (isReady && fontesProntas) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [isReady, fontesProntas]);
+
+  if (!isReady || !fontesProntas) {
+    return <View style={{ flex: 1, backgroundColor: cores.background }} />;
+  }
+
+  if (dbError) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6200ee" />
-      </View>
+      <Mensagem>
+        <Texto variante="subtitle">Não foi possível abrir os seus dados</Texto>
+        <Texto cor={cores.textMuted} style={styles.paragrafo}>
+          {dbError}
+        </Texto>
+        <Botao
+          titulo="Tentar novamente"
+          variante="secundario"
+          onPress={() => {
+            setDbError(null);
+            setIsReady(false);
+            initializeApp();
+          }}
+        />
+      </Mensagem>
     );
   }
 
-  // Se estiver na web, mostrar mensagem
   if (Platform.OS === 'web') {
     return (
-      <PaperProvider>
-        <View style={styles.webContainer}>
-          <Card style={styles.card}>
-            <Card.Title title="📱 App Cupom Favorito" />
-            <Card.Content>
-              <Text style={styles.title}>Este app precisa ser usado no celular!</Text>
-
-              <Text style={styles.subtitle}>
-                O App Cupom Favorito usa a câmera do celular para escanear QR Codes de cupons fiscais.
-              </Text>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>🚀 Como usar:</Text>
-                <Text style={styles.item}>1. Instale o app "Expo Go" no seu celular</Text>
-                <Text style={styles.item}>2. Abra um terminal e execute:</Text>
-                <Text style={styles.code}>   npx expo start</Text>
-                <Text style={styles.item}>3. Escaneie o QR Code que aparecer</Text>
-              </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>📦 Funcionalidades:</Text>
-                <Text style={styles.item}>• Escanear cupons fiscais (NFCe)</Text>
-                <Text style={styles.item}>• Histórico de compras</Text>
-                <Text style={styles.item}>• Análise de preços por mercado</Text>
-                <Text style={styles.item}>• Recomendação de onde comprar</Text>
-                <Text style={styles.item}>• Estatísticas de gastos e descontos</Text>
-              </View>
-
-              <Button
-                mode="contained"
-                icon="download"
-                onPress={() => Linking.openURL('https://expo.dev/go')}
-                style={styles.button}
-              >
-                Baixar Expo Go
-              </Button>
-            </Card.Content>
-          </Card>
-          <StatusBar style="auto" />
-        </View>
-      </PaperProvider>
+      <Mensagem>
+        <Logo />
+        <Texto variante="title" style={styles.titulo}>
+          Seu cupom sabe onde é mais barato.
+        </Texto>
+        <Texto cor={cores.textMuted} style={styles.paragrafo}>
+          O cupom favorito usa a câmera do celular para ler o QR Code dos cupons fiscais (NFC-e).
+          Para usar, instale o Expo Go no celular, rode{' '}
+          <Texto variante="numberSmall">npx expo start</Texto> no terminal e escaneie o QR Code que
+          aparecer.
+        </Texto>
+        <Botao titulo="Baixar Expo Go" onPress={() => Linking.openURL('https://expo.dev/go')} />
+      </Mensagem>
     );
   }
 
+  return <AppNavigator />;
+};
+
+export default function App() {
   return (
-    <PaperProvider>
-      <AppNavigator />
-      <StatusBar style="auto" />
-    </PaperProvider>
+    <SafeAreaProvider>
+      <TemaProvider>
+        <Conteudo />
+        <StatusBar style="auto" />
+      </TemaProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  mensagem: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  webContainer: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    padding: space.screen,
   },
   card: {
-    maxWidth: 600,
+    maxWidth: 560,
     width: '100%',
-    elevation: 4,
+    gap: space.md,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-    color: '#333',
+  titulo: {
+    marginTop: space.lg,
   },
-  subtitle: {
-    fontSize: 16,
-    marginBottom: 20,
-    textAlign: 'center',
-    color: '#666',
-  },
-  section: {
-    marginVertical: 15,
-    padding: 15,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    color: '#333',
-  },
-  item: {
-    fontSize: 14,
-    marginBottom: 8,
-    color: '#555',
-  },
-  code: {
-    fontSize: 14,
-    fontFamily: 'monospace',
-    backgroundColor: '#e0e0e0',
-    padding: 10,
-    marginVertical: 8,
-    borderRadius: 4,
-    color: '#333',
-  },
-  button: {
-    marginTop: 20,
+  paragrafo: {
+    marginBottom: space.md,
   },
 });

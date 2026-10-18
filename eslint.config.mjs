@@ -31,6 +31,8 @@ export default [
     },
     rules: {
       'prettier/prettier': 'error',
+      // A regra base não entende parâmetros em tipos TS; a do typescript-eslint cobre o caso
+      'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_' },
@@ -41,12 +43,24 @@ export default [
     },
   },
   {
+    // Config plugins do Expo rodam no Node (CommonJS)
+    files: ['plugins/**/*.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { require: 'readonly', module: 'writable', __dirname: 'readonly' },
+    },
+  },
+  {
     ignores: [
       'node_modules/**',
       '.expo/**',
       'dist/**',
       'build/**',
       '*.config.js',
+      '*.config.mjs',
+      '.prettierrc.js',
+      // Entregável da identidade visual, mantido como veio do design
+      'brand/**',
     ],
   },
 ];

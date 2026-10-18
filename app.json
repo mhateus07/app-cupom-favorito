@@ -1,32 +1,24 @@
 {
   "expo": {
-    "name": "app_cupom_favorito",
+    "name": "cupom favorito",
     "slug": "app_cupom_favorito",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
-      "infoPlist": {
-        "NSCameraUsageDescription": "Este app precisa de acesso à câmera para escanear cupons fiscais."
-      }
+      "bundleIdentifier": "com.mkteuscr7.app-cupom-favorito",
+      "backgroundColor": "#0F1412"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "monochromeImage": "./assets/monochrome-icon.png",
+        "backgroundColor": "#0F1412"
       },
-      "permissions": [
-        "CAMERA",
-        "android.permission.CAMERA"
-      ],
+      "permissions": ["android.permission.CAMERA"],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.mkteuscr7.app_cupom_favorito"
@@ -35,8 +27,26 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-barcode-scanner",
-      "expo-sqlite"
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Este app precisa de acesso à câmera para escanear cupons fiscais.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-sqlite",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#0F1412"
+        }
+      ],
+      "./plugins/withPodsDeploymentTarget"
     ],
     "extra": {
       "eas": {
