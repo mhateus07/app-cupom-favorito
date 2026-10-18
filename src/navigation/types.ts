@@ -1,6 +1,7 @@
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { CompositeScreenProps, NavigatorScreenParams } from '@react-navigation/native';
 import { StackScreenProps } from '@react-navigation/stack';
+import { CupomData } from '../models/types';
 
 export type TabParamList = {
   Cupons: undefined;
@@ -12,6 +13,8 @@ export type RootStackParamList = {
   CupomDetail: { cupomId: number };
   ProductComparison: { produto: string };
   ShoppingList: undefined;
+  ProdutosMonitorados: { produto?: string } | undefined;
+  RevisarCupom: { cupom: CupomData };
   Scan: undefined;
 };
 

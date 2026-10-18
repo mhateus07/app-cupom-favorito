@@ -1,10 +1,12 @@
 import * as SQLite from 'expo-sqlite';
 import {
+  AlertaEnviado,
   CupomData,
   EstabelecimentoData,
   ItemListaCompra,
   ListaCompra,
   ProdutoData,
+  ProdutoMonitorado,
 } from '../../models/types';
 import { normalizarChaveNome } from '../../utils/texto';
 
@@ -173,6 +175,42 @@ const MIGRATIONS: string[] = [
   ALTER TABLE estabelecimentos ADD COLUMN latitude REAL;
   ALTER TABLE estabelecimentos ADD COLUMN longitude REAL;
   `,
+
+  // v6: preferências, nomes corrigidos pelo usuário e alertas de preço configuráveis
+  `
+  CREATE TABLE IF NOT EXISTS preferencias (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
+  );
+
+  -- Nome normalizado lido na NFC-e -> nome escolhido pelo usuário
+  CREATE TABLE IF NOT EXISTS apelidos_produtos (
+    nome_original TEXT PRIMARY KEY,
+    nome_corrigido TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS produtos_monitorados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chave TEXT UNIQUE NOT NULL,
+    nome TEXT NOT NULL,
+    preco_alvo REAL,
+    queda_minima REAL NOT NULL DEFAULT 5,
+    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS alertas_enviados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chave TEXT NOT NULL,
+    produto TEXT NOT NULL,
+    mercado TEXT NOT NULL,
+    cnpj TEXT NOT NULL,
+    preco REAL NOT NULL,
+    preco_referencia REAL NOT NULL,
+    enviado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_alertas_chave ON alertas_enviados(chave, cnpj);
+  `,
 ];
 
 /**
@@ -260,6 +298,16 @@ export const cupomExiste = async (chaveAcesso: string): Promise<boolean> => {
   return row !== null;
 };
 
+/** Correções de nome salvas: nome normalizado lido na NFC-e -> nome escolhido */
+export const carregarApelidos = async (
+  database: SQLite.SQLiteDatabase = getDB()
+): Promise<Map<string, string>> => {
+  const rows = await database.getAllAsync<{ nome_original: string; nome_corrigido: string }>(
+    'SELECT nome_original, nome_corrigido FROM apelidos_produtos'
+  );
+  return new Map(rows.map(row => [row.nome_original, row.nome_corrigido]));
+};
+
 /**
  * Insere um cupom completo (estabelecimento + cupom + produtos) numa única transação
  */
@@ -290,6 +338,8 @@ export const insertCupom = async (cupomData: CupomData): Promise<number> => {
 
       cupomId = cupomResult.lastInsertRowId;
 
+      const apelidos = await carregarApelidos(txn);
+
       const insertProduto = await txn.prepareAsync(
         `INSERT INTO produtos (cupom_id, nome, nome_normalizado, codigo, gtin, unidade, marca, categoria, preco, quantidade, desconto, preco_final)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -297,10 +347,11 @@ export const insertCupom = async (cupomData: CupomData): Promise<number> => {
 
       try {
         for (const produto of cupomData.produtos) {
+          const nome = apelidos.get(normalizarChaveNome(produto.nome)) ?? produto.nome;
           await insertProduto.executeAsync([
             cupomId,
-            produto.nome,
-            normalizarChaveNome(produto.nome),
+            nome,
+            normalizarChaveNome(nome),
             produto.codigo,
             produto.gtin ?? null,
             produto.unidade ?? null,
@@ -608,5 +659,163 @@ export const deleteCupom = async (id: number): Promise<void> => {
   await getDB().withExclusiveTransactionAsync(async txn => {
     await txn.runAsync('DELETE FROM produtos WHERE cupom_id = ?', [id]);
     await txn.runAsync('DELETE FROM cupons WHERE id = ?', [id]);
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Preferências
+// ---------------------------------------------------------------------------
+
+export const getPreferencia = async (chave: string): Promise<string | null> => {
+  const row = await getDB().getFirstAsync<{ valor: string }>(
+    'SELECT valor FROM preferencias WHERE chave = ?',
+    [chave]
+  );
+  return row?.valor ?? null;
+};
+
+export const setPreferencia = async (chave: string, valor: string): Promise<void> => {
+  await getDB().runAsync(
+    `INSERT INTO preferencias (chave, valor) VALUES (?, ?)
+     ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`,
+    [chave, valor]
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Correção manual de nomes de produtos
+// ---------------------------------------------------------------------------
+
+/**
+ * Renomeia todas as compras de um produto e lembra a correção, para que os próximos
+ * cupons com o mesmo nome já entrem corrigidos.
+ */
+export const corrigirNomeProduto = async (nomeAtual: string, nomeNovo: string): Promise<void> => {
+  const novo = nomeNovo.trim();
+  const original = normalizarChaveNome(nomeAtual);
+  if (!novo || !original) return;
+  const normalizadoNovo = normalizarChaveNome(novo);
+
+  await getDB().withExclusiveTransactionAsync(async txn => {
+    await txn.runAsync(
+      'UPDATE produtos SET nome = ?, nome_normalizado = ? WHERE nome_normalizado = ?',
+      [novo, normalizadoNovo, original]
+    );
+    // Apelidos que apontavam para o nome antigo passam a apontar para o novo
+    await txn.runAsync(
+      'UPDATE apelidos_produtos SET nome_corrigido = ? WHERE lower(nome_corrigido) = lower(?)',
+      [novo, nomeAtual.trim()]
+    );
+    if (original !== normalizadoNovo) {
+      await txn.runAsync(
+        `INSERT INTO apelidos_produtos (nome_original, nome_corrigido) VALUES (?, ?)
+         ON CONFLICT(nome_original) DO UPDATE SET nome_corrigido = excluded.nome_corrigido`,
+        [original, novo]
+      );
+    }
+    await txn.runAsync('DELETE FROM apelidos_produtos WHERE nome_original = ?', [normalizadoNovo]);
+  });
+};
+
+/** Grava as correções feitas na revisão do cupom (nome lido -> nome escolhido) */
+export const salvarApelidos = async (
+  correcoes: Array<{ original: string; corrigido: string }>
+): Promise<void> => {
+  const validas = correcoes.filter(
+    c => c.corrigido.trim() && normalizarChaveNome(c.original) !== normalizarChaveNome(c.corrigido)
+  );
+  if (validas.length === 0) return;
+  await getDB().withExclusiveTransactionAsync(async txn => {
+    for (const { original, corrigido } of validas) {
+      await txn.runAsync(
+        `INSERT INTO apelidos_produtos (nome_original, nome_corrigido) VALUES (?, ?)
+         ON CONFLICT(nome_original) DO UPDATE SET nome_corrigido = excluded.nome_corrigido`,
+        [normalizarChaveNome(original), corrigido.trim()]
+      );
+    }
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Produtos monitorados e alertas enviados
+// ---------------------------------------------------------------------------
+
+export const getProdutosMonitorados = async (): Promise<ProdutoMonitorado[]> => {
+  const rows = await getDB().getAllAsync<{
+    id: number;
+    chave: string;
+    nome: string;
+    preco_alvo: number | null;
+    queda_minima: number;
+  }>('SELECT id, chave, nome, preco_alvo, queda_minima FROM produtos_monitorados ORDER BY nome');
+  return rows.map(row => ({
+    id: row.id,
+    chave: row.chave,
+    nome: row.nome,
+    precoAlvo: row.preco_alvo,
+    quedaMinima: row.queda_minima,
+  }));
+};
+
+export const salvarProdutoMonitorado = async (
+  produto: Omit<ProdutoMonitorado, 'id'>
+): Promise<void> => {
+  await getDB().runAsync(
+    `INSERT INTO produtos_monitorados (chave, nome, preco_alvo, queda_minima) VALUES (?, ?, ?, ?)
+     ON CONFLICT(chave) DO UPDATE SET
+       nome = excluded.nome,
+       preco_alvo = excluded.preco_alvo,
+       queda_minima = excluded.queda_minima`,
+    [produto.chave, produto.nome, produto.precoAlvo, produto.quedaMinima]
+  );
+};
+
+export const removerProdutoMonitorado = async (id: number): Promise<void> => {
+  await getDB().runAsync('DELETE FROM produtos_monitorados WHERE id = ?', [id]);
+};
+
+export const getAlertasEnviados = async (limite = 100): Promise<AlertaEnviado[]> => {
+  const rows = await getDB().getAllAsync<{
+    id: number;
+    chave: string;
+    produto: string;
+    mercado: string;
+    cnpj: string;
+    preco: number;
+    preco_referencia: number;
+    enviado_em: string;
+  }>('SELECT * FROM alertas_enviados ORDER BY enviado_em DESC, id DESC LIMIT ?', [limite]);
+  return rows.map(row => ({
+    id: row.id,
+    chave: row.chave,
+    produto: row.produto,
+    mercado: row.mercado,
+    cnpj: row.cnpj,
+    preco: row.preco,
+    precoReferencia: row.preco_referencia,
+    enviadoEm: row.enviado_em,
+  }));
+};
+
+export const registrarAlertasEnviados = async (
+  alertas: Array<Omit<AlertaEnviado, 'id' | 'enviadoEm'>>
+): Promise<void> => {
+  if (alertas.length === 0) return;
+  await getDB().withExclusiveTransactionAsync(async txn => {
+    for (const alerta of alertas) {
+      await txn.runAsync(
+        `INSERT INTO alertas_enviados (chave, produto, mercado, cnpj, preco, preco_referencia, enviado_em)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          alerta.chave,
+          alerta.produto,
+          alerta.mercado,
+          alerta.cnpj,
+          alerta.preco,
+          alerta.precoReferencia,
+          new Date().toISOString(),
+        ]
+      );
+    }
   });
 };

@@ -1,11 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { CaretLeft } from 'phosphor-react-native';
-import { getAllCupons } from '../services/database/database';
-import { compararPrecoProduto, analisarProdutos } from '../services/analytics/analyticsService';
+import { corrigirNomeProduto, getAllCupons } from '../services/database/database';
+import {
+  compararPrecoProduto,
+  analisarProdutos,
+  chaveProduto,
+  historicoPrecoProduto,
+} from '../services/analytics/analyticsService';
 import { CupomData } from '../models/types';
 import { RootScreenProps } from '../navigation/types';
-import { Card, CampoTexto, FundoStatusBar, Texto } from '../components/ui';
+import { Botao, Card, CampoTexto, FundoStatusBar, Texto } from '../components/ui';
+import { GraficoPreco } from '../components/GraficoPreco';
 import { formatarDiaMes, formatarValor } from '../utils/formatacao';
 import { radius, space, useTema } from '../theme';
 
@@ -17,6 +23,7 @@ export const ProductComparisonScreen: React.FC<RootScreenProps<'ProductCompariso
   const [cupons, setCupons] = useState<CupomData[]>([]);
   const [termo, setTermo] = useState(route.params.produto);
   const [loading, setLoading] = useState(true);
+  const [novoNome, setNovoNome] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -38,6 +45,31 @@ export const ProductComparisonScreen: React.FC<RootScreenProps<'ProductCompariso
       ),
     [cupons, termo]
   );
+  const historico = useMemo(
+    () => historicoPrecoProduto(estatistica?.chave ?? termo, cupons),
+    [cupons, estatistica, termo]
+  );
+
+  const salvarNome = async () => {
+    const nome = novoNome?.trim();
+    if (!estatistica || !nome) return;
+    // Com código de barras, o mesmo produto pode ter nomes diferentes em cada mercado
+    const nomesAtuais = new Set(
+      cupons
+        .flatMap(cupom => cupom.produtos)
+        .filter(produto => chaveProduto(produto) === estatistica.chave)
+        .map(produto => produto.nome)
+    );
+    try {
+      for (const atual of nomesAtuais) await corrigirNomeProduto(atual, nome);
+      setNovoNome(null);
+      setTermo(nome);
+      await carregar();
+    } catch (error) {
+      console.error('Erro ao corrigir nome:', error);
+      Alert.alert('Não foi possível corrigir o nome', 'Tente novamente em alguns instantes.');
+    }
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: cores.background }]}>
@@ -93,7 +125,60 @@ export const ProductComparisonScreen: React.FC<RootScreenProps<'ProductCompariso
                   </Texto>
                 </View>
               </View>
+              {novoNome === null ? (
+                <View style={styles.acoes}>
+                  <Botao
+                    titulo="Corrigir nome"
+                    variante="contorno"
+                    onPress={() => setNovoNome(estatistica.nome)}
+                    style={styles.acao}
+                  />
+                  <Botao
+                    titulo="Monitorar"
+                    variante="secundario"
+                    onPress={() =>
+                      navigation.navigate('ProdutosMonitorados', { produto: estatistica.nome })
+                    }
+                    style={styles.acao}
+                  />
+                </View>
+              ) : (
+                <View style={styles.edicao}>
+                  <CampoTexto
+                    rotulo="Nome do produto"
+                    value={novoNome}
+                    onChangeText={setNovoNome}
+                    autoFocus
+                  />
+                  <Texto variante="small" cor={cores.textMuted}>
+                    Vale para todas as compras deste produto e para os próximos cupons.
+                  </Texto>
+                  <View style={styles.acoes}>
+                    <Botao
+                      titulo="Cancelar"
+                      variante="contorno"
+                      onPress={() => setNovoNome(null)}
+                      style={styles.acao}
+                    />
+                    <Botao titulo="Salvar" onPress={salvarNome} style={styles.acao} />
+                  </View>
+                </View>
+              )}
             </Card>
+          )}
+
+          {historico.length >= 2 && (
+            <>
+              <View style={styles.secao}>
+                <Texto variante="subtitle">Evolução do preço</Texto>
+                <Texto variante="label" cor={cores.textMuted}>
+                  Por compra
+                </Texto>
+              </View>
+              <Card>
+                <GraficoPreco pontos={historico} />
+              </Card>
+            </>
           )}
 
           <View style={styles.secao}>
@@ -174,4 +259,7 @@ const styles = StyleSheet.create({
     gap: space.lg,
   },
   info: { flex: 1, gap: 2 },
+  acoes: { flexDirection: 'row', gap: space.md },
+  acao: { flex: 1, paddingHorizontal: space.md },
+  edicao: { gap: space.md },
 });

@@ -12,9 +12,10 @@ import {
 } from '@expo-google-fonts/geist';
 import { GeistMono_400Regular, GeistMono_500Medium } from '@expo-google-fonts/geist-mono';
 import { AppNavigator } from './src/navigation/AppNavigator';
-import { initDatabase } from './src/services/database/database';
+import { getPreferencia, initDatabase, setPreferencia } from './src/services/database/database';
 import { Botao, Card, Logo, Texto } from './src/components/ui';
 import { AberturaAnimada } from './src/components/AberturaAnimada';
+import { Tutorial } from './src/components/Tutorial';
 import { TemaProvider, colors, space, useTema } from './src/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -22,6 +23,8 @@ SplashScreen.preventAutoHideAsync().catch(() => {
 });
 // O splash some rápido: a abertura animada começa no mesmo fundo Tinta
 SplashScreen.setOptions({ duration: 200, fade: true });
+
+const PREF_TUTORIAL = 'tutorial_concluido_em';
 
 const Mensagem: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { cores } = useTema();
@@ -37,6 +40,7 @@ const Conteudo: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [mostrarAbertura, setMostrarAbertura] = useState(Platform.OS !== 'web');
+  const [mostrarTutorial, setMostrarTutorial] = useState(false);
   const [fontesCarregadas, erroFontes] = useFonts({
     Geist_400Regular,
     Geist_500Medium,
@@ -50,6 +54,7 @@ const Conteudo: React.FC = () => {
       // Inicializar banco de dados apenas em plataformas mobile
       if (Platform.OS !== 'web') {
         await initDatabase();
+        setMostrarTutorial((await getPreferencia(PREF_TUTORIAL)) === null);
         console.log('App inicializado com sucesso');
       } else {
         console.log('Modo web - banco de dados não inicializado');
@@ -119,10 +124,18 @@ const Conteudo: React.FC = () => {
     );
   }
 
+  const concluirTutorial = () => {
+    setMostrarTutorial(false);
+    setPreferencia(PREF_TUTORIAL, new Date().toISOString()).catch(error =>
+      console.warn('Não foi possível salvar o fim do tutorial:', error)
+    );
+  };
+
   // O app já é montado por baixo da abertura, para estar pronto quando ela sair
   return (
     <View style={styles.app}>
       <AppNavigator />
+      {mostrarTutorial && <Tutorial onFim={concluirTutorial} />}
       {abertura}
     </View>
   );

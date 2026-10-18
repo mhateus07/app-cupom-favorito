@@ -9,6 +9,8 @@ import { ScanScreen } from '../screens/ScanScreen';
 import { CupomDetailScreen } from '../screens/CupomDetailScreen';
 import { ProductComparisonScreen } from '../screens/ProductComparisonScreen';
 import { ShoppingListScreen } from '../screens/ShoppingListScreen';
+import { ProdutosMonitoradosScreen } from '../screens/ProdutosMonitoradosScreen';
+import { RevisarCupomScreen } from '../screens/RevisarCupomScreen';
 import { RootStackParamList, TabParamList } from './types';
 import { TabBar } from './TabBar';
 import { useTema } from '../theme';
@@ -45,6 +47,12 @@ export const AppNavigator = () => {
         <RootStack.Screen name="CupomDetail" component={CupomDetailScreen} />
         <RootStack.Screen name="ProductComparison" component={ProductComparisonScreen} />
         <RootStack.Screen name="ShoppingList" component={ShoppingListScreen} />
+        <RootStack.Screen name="ProdutosMonitorados" component={ProdutosMonitoradosScreen} />
+        <RootStack.Screen
+          name="RevisarCupom"
+          component={RevisarCupomScreen}
+          options={{ gestureEnabled: false }}
+        />
         <RootStack.Screen
           name="Scan"
           component={ScanScreen}

@@ -237,6 +237,16 @@ export const HistoryScreen: React.FC<TabScreenProps<'Cupons'>> = ({ navigation }
           </Pressable>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Abrir alertas de preço"
+            onPress={() => navigation.navigate('ProdutosMonitorados')}
+            style={({ pressed }) => [styles.acaoTopo, pressed && { opacity: 0.65 }]}
+          >
+            <Texto variante="label" cor={cores.textMuted}>
+              Alertas
+            </Texto>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
             accessibilityLabel="Exportar cupons"
             onPress={exportar}
             style={({ pressed }) => [styles.acaoTopo, pressed && { opacity: 0.65 }]}

@@ -103,6 +103,47 @@ export interface Recomendacao {
   distancia?: number; // em km, opcional
 }
 
+export interface ProdutoMonitorado {
+  id: number;
+  chave: string; // Mesma chave de agrupamento das análises (GTIN ou nome normalizado)
+  nome: string;
+  precoAlvo: number | null; // Avisa quando o preço pago ficar igual ou abaixo deste valor
+  quedaMinima: number; // Percentual mínimo de queda em relação à média para avisar
+}
+
+export interface AlertaEnviado {
+  id: number;
+  chave: string;
+  produto: string;
+  mercado: string;
+  cnpj: string;
+  preco: number;
+  precoReferencia: number;
+  enviadoEm: string;
+}
+
+export interface PontoPreco {
+  data: string;
+  preco: number;
+  estabelecimento: string;
+}
+
+export interface ProjecaoGasto {
+  referencia: string; // "2026-10"
+  gastoAteAgora: number;
+  projecao: number;
+  mediaMesesAnteriores: number | null;
+  diasDecorridos: number;
+  diasNoMes: number;
+}
+
+export interface InflacaoCesta {
+  percentual: number; // 3.2 = cesta 3,2% mais cara que no período anterior
+  produtosComparados: number;
+  periodoAtual: { inicio: string; fim: string };
+  periodoAnterior: { inicio: string; fim: string };
+}
+
 // Tipos para filtros e buscas
 
 export interface FiltroData {
