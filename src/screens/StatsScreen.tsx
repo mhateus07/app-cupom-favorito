@@ -17,6 +17,8 @@ import {
   analisarProdutos,
   gerarRecomendacoes,
   analisarGastosMensais,
+  projetarGastoMensal,
+  calcularInflacaoCesta,
 } from '../services/analytics/analyticsService';
 import { CupomData, EstabelecimentoEstatistica } from '../models/types';
 import { TabScreenProps } from '../navigation/types';
@@ -135,10 +137,12 @@ export const StatsScreen: React.FC<TabScreenProps<'Analises'>> = ({ navigation }
       resumo: gerarResumoGeral(cupons),
       estabelecimentos: analisarEstabelecimentos(cupons),
       produtos: analisarProdutos(cupons),
-      recomendacoes: gerarRecomendacoes(cupons),
+      recomendacoes: gerarRecomendacoes(cupons, distancias),
       gastosMensais: analisarGastosMensais(cupons),
+      projecao: projetarGastoMensal(cupons),
+      inflacao: calcularInflacaoCesta(cupons),
     }),
-    [cupons]
+    [cupons, distancias]
   );
 
   const onRefresh = () => {
@@ -214,7 +218,8 @@ export const StatsScreen: React.FC<TabScreenProps<'Analises'>> = ({ navigation }
     );
   }
 
-  const { resumo, estabelecimentos, produtos, recomendacoes, gastosMensais } = analise;
+  const { resumo, estabelecimentos, produtos, recomendacoes, gastosMensais, projecao, inflacao } =
+    analise;
   const recomendado = recomendacoes[0];
   const maiorIndice = Math.max(1, ...estabelecimentos.map(e => e.indicePreco ?? 0));
   const maiorGastoMensal = Math.max(1, ...gastosMensais.map(mes => mes.gasto));
@@ -304,6 +309,12 @@ export const StatsScreen: React.FC<TabScreenProps<'Analises'>> = ({ navigation }
                 />
               ))}
             </View>
+            <Botao
+              titulo="Alertas de preço"
+              variante="contorno"
+              onPress={() => navigation.navigate('ProdutosMonitorados')}
+              style={styles.nota}
+            />
             <Texto variante="small" cor={cores.textMuted} style={styles.nota}>
               Comparando os mesmos produtos (pelo código de barras, ou pelo nome quando não há
               código) entre os mercados onde você comprou.
@@ -346,6 +357,53 @@ export const StatsScreen: React.FC<TabScreenProps<'Analises'>> = ({ navigation }
                   </Texto>
                 </View>
               ))}
+            </Card>
+
+            <View style={styles.secao}>
+              <Texto variante="subtitle">Tendências</Texto>
+            </View>
+            <Card style={styles.cardLista}>
+              <View style={styles.linhaResumo}>
+                <View style={styles.produtoInfo}>
+                  <Texto cor={cores.textMuted}>Projeção do mês</Texto>
+                  <Texto variante="small" cor={cores.textMuted}>
+                    R$ {formatarValor(projecao.gastoAteAgora)} em {projecao.diasDecorridos} de{' '}
+                    {projecao.diasNoMes} dias
+                    {projecao.mediaMesesAnteriores !== null
+                      ? ` · média R$ ${formatarValor(projecao.mediaMesesAnteriores)}`
+                      : ''}
+                  </Texto>
+                </View>
+                <Texto
+                  variante="numberSmall"
+                  cor={
+                    projecao.mediaMesesAnteriores !== null &&
+                    projecao.projecao > projecao.mediaMesesAnteriores
+                      ? cores.danger
+                      : cores.text
+                  }
+                >
+                  R$ {formatarValor(projecao.projecao)}
+                </Texto>
+              </View>
+              <View
+                style={[styles.linhaResumo, { borderTopWidth: 1, borderTopColor: cores.border }]}
+              >
+                <View style={styles.produtoInfo}>
+                  <Texto cor={cores.textMuted}>Inflação da sua cesta</Texto>
+                  <Texto variante="small" cor={cores.textMuted}>
+                    {inflacao
+                      ? `Últimos 90 dias vs. 90 anteriores · ${inflacao.produtosComparados} ${inflacao.produtosComparados === 1 ? 'produto' : 'produtos'}`
+                      : 'Precisa de compras dos mesmos produtos em dois trimestres'}
+                  </Texto>
+                </View>
+                {inflacao && (
+                  <Selo
+                    variante={inflacao.percentual > 0 ? 'alta' : 'economia'}
+                    texto={`${inflacao.percentual > 0 ? '+' : inflacao.percentual < 0 ? '−' : ''}${formatarValor(Math.abs(inflacao.percentual))}%`}
+                  />
+                )}
+              </View>
             </Card>
 
             <View style={styles.secao}>

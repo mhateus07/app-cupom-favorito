@@ -1,5 +1,13 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { CupomData } from '../../models/types';
+import {
+  getAlertasEnviados,
+  getProdutosMonitorados,
+  registrarAlertasEnviados,
+} from '../database/database';
+import { formatarValor } from '../../utils/formatacao';
+import { AlertaQuedaPreco, avaliarAlertas } from './avaliarAlertas';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -10,14 +18,6 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
-
-export interface AlertaQuedaPreco {
-  produto: string;
-  mercado: string;
-  precoAnterior: number;
-  precoAtual: number;
-  percentual: number;
-}
 
 let canalConfigurado = false;
 
@@ -49,8 +49,11 @@ export const agendarAlertasDeQueda = async (alertas: AlertaQuedaPreco[]): Promis
     alertas.map(alerta =>
       Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Preço menor encontrado',
-          body: `${alerta.produto} caiu ${alerta.percentual}% em ${alerta.mercado}: R$ ${alerta.precoAtual.toFixed(2)}`,
+          title: alerta.motivo === 'alvo' ? 'Preço-alvo atingido' : 'Preço menor encontrado',
+          body:
+            alerta.motivo === 'alvo'
+              ? `${alerta.produto} saiu por R$ ${formatarValor(alerta.precoAtual)} em ${alerta.mercado} (seu alvo: R$ ${formatarValor(alerta.precoAlvo ?? alerta.precoAtual)})`
+              : `${alerta.produto} caiu ${alerta.percentual}% em ${alerta.mercado}: R$ ${formatarValor(alerta.precoAtual)}`,
           data: { produto: alerta.produto, mercado: alerta.mercado },
           sound: false,
           ...(Platform.OS === 'android' ? { channelId: 'precos' } : {}),
@@ -59,4 +62,33 @@ export const agendarAlertasDeQueda = async (alertas: AlertaQuedaPreco[]): Promis
       })
     )
   );
+};
+
+/**
+ * Avalia o cupom recém-salvo contra o histórico anterior, avisa e registra os alertas
+ * enviados (o registro evita repetir o mesmo aviso)
+ */
+export const processarAlertasDoCupom = async (
+  cupom: CupomData,
+  historicoAntes: CupomData[]
+): Promise<AlertaQuedaPreco[]> => {
+  const [monitorados, enviados] = await Promise.all([
+    getProdutosMonitorados(),
+    getAlertasEnviados(1000),
+  ]);
+  const alertas = avaliarAlertas(cupom, historicoAntes, monitorados, enviados);
+  if (alertas.length === 0) return [];
+
+  await agendarAlertasDeQueda(alertas);
+  await registrarAlertasEnviados(
+    alertas.map(alerta => ({
+      chave: alerta.chave,
+      produto: alerta.produto,
+      mercado: alerta.mercado,
+      cnpj: alerta.cnpj,
+      preco: alerta.precoAtual,
+      precoReferencia: alerta.precoReferencia,
+    }))
+  );
+  return alertas;
 };

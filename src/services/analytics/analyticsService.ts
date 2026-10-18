@@ -8,9 +8,12 @@ import {
   ResumoGeral,
   Recomendacao,
   ItemListaCompra,
+  InflacaoCesta,
+  PontoPreco,
+  ProjecaoGasto,
 } from '../../models/types';
 import { groupBy, meanBy, maxBy, sumBy, orderBy } from 'lodash';
-import { format, parseISO } from 'date-fns';
+import { format, getDaysInMonth, parseISO, subDays } from 'date-fns';
 import { normalizarChaveNome } from '../../utils/texto';
 
 interface ItemComprado extends ProdutoData {
@@ -320,9 +323,13 @@ export const calcularCestaPorMercado = (
 
 /**
  * Gera recomendação de onde comprar, considerando só mercados que têm produtos em comum
- * com outros mercados (sem isso não há como saber se um é mais barato que o outro)
+ * com outros mercados (sem isso não há como saber se um é mais barato que o outro).
+ * Com as distâncias (km por CNPJ), mercados perto ganham pontos e os longe perdem.
  */
-export const gerarRecomendacoes = (cupons: CupomData[]): Recomendacao[] => {
+export const gerarRecomendacoes = (
+  cupons: CupomData[],
+  distancias: Record<string, number> = {}
+): Recomendacao[] => {
   const comparaveis = analisarEstabelecimentos(cupons).filter(
     (e): e is EstabelecimentoEstatistica & { indicePreco: number } => e.indicePreco !== null
   );
@@ -356,11 +363,27 @@ export const gerarRecomendacoes = (cupons: CupomData[]): Recomendacao[] => {
       score += 5;
     }
 
+    const distancia = distancias[est.cnpj];
+    if (distancia !== undefined) {
+      const km = `${distancia.toFixed(1).replace('.', ',')} km`;
+      if (distancia <= 2) {
+        razoes.push(`Perto de você (${km})`);
+        score += 10;
+      } else if (distancia <= 5) {
+        razoes.push(`A ${km} de você`);
+        score += 5;
+      } else if (distancia > 15) {
+        razoes.push(`Longe de você (${km})`);
+        score -= 10;
+      }
+    }
+
     return {
       estabelecimento: est.nome,
       score: Math.max(0, Math.min(100, Math.round(score))),
       razoes,
       economiaEstimada: Math.max(0, est.economiaEstimada),
+      distancia,
     };
   });
 
@@ -384,6 +407,103 @@ export const produtosComMaiorVariacao = (
     .filter(p => p.variacaoPercentual > 5); // Apenas variações maiores que 5%
 
   return orderBy(comVariacao, ['variacaoPercentual'], ['desc']);
+};
+
+/**
+ * Preços pagos por um produto ao longo do tempo (um ponto por compra), do mais antigo
+ * para o mais recente. Aceita a chave de agrupamento ou o nome do produto.
+ */
+export const historicoPrecoProduto = (produto: string, cupons: CupomData[]): PontoPreco[] => {
+  const porChave = produto.startsWith('gtin:') || produto.startsWith('nome:');
+  const alvo = porChave ? produto : normalizarChaveNome(produto);
+  // Pelo nome, entram também os produtos com GTIN que tenham exatamente esse nome
+  const encontrados = listarItens(cupons).filter(item =>
+    porChave ? item.chave === alvo : normalizarChaveNome(item.nome) === alvo
+  );
+
+  return orderBy(
+    encontrados.map(item => ({
+      data: item.data,
+      preco: arredondar(item.precoUnitario),
+      estabelecimento: item.estabelecimento,
+    })),
+    ['data'],
+    ['asc']
+  );
+};
+
+/**
+ * Projeta o gasto do mês atual pelo ritmo de compras até hoje e compara com a média
+ * dos três meses anteriores que tiveram compras
+ */
+export const projetarGastoMensal = (cupons: CupomData[], hoje = new Date()): ProjecaoGasto => {
+  const referencia = format(hoje, 'yyyy-MM');
+  const doMes = cupons.filter(cupom => cupom.data.startsWith(referencia));
+  const gastoAteAgora = arredondar(sumBy(doMes, 'total'));
+  const diasNoMes = getDaysInMonth(hoje);
+  const diasDecorridos = hoje.getDate();
+
+  const anteriores = analisarGastosMensais(cupons)
+    .filter(mes => mes.referencia < referencia)
+    .slice(0, 3);
+
+  return {
+    referencia,
+    gastoAteAgora,
+    projecao: arredondar((gastoAteAgora / diasDecorridos) * diasNoMes),
+    mediaMesesAnteriores: anteriores.length ? arredondar(meanBy(anteriores, 'gasto')) : null,
+    diasDecorridos,
+    diasNoMes,
+  };
+};
+
+/**
+ * Inflação da cesta pessoal: quanto custariam hoje os produtos que você comprou no período
+ * anterior, nas mesmas quantidades (índice de Laspeyres). Os períodos têm o mesmo tamanho
+ * e terminam na compra mais recente. Devolve null sem produtos comprados nos dois períodos.
+ */
+export const calcularInflacaoCesta = (cupons: CupomData[], dias = 90): InflacaoCesta | null => {
+  const maisRecente = maxBy(cupons, 'data');
+  if (!maisRecente) return null;
+
+  const fim = parseISO(maisRecente.data.slice(0, 10));
+  const inicioAtual = format(subDays(fim, dias - 1), 'yyyy-MM-dd');
+  const inicioAnterior = format(subDays(fim, dias * 2 - 1), 'yyyy-MM-dd');
+  const fimAnterior = format(subDays(fim, dias), 'yyyy-MM-dd');
+  const fimAtual = format(fim, 'yyyy-MM-dd');
+
+  const itens = listarItens(cupons);
+  const noPeriodo = (inicio: string, final: string) =>
+    groupBy(
+      itens.filter(item => {
+        const dia = item.data.slice(0, 10);
+        return dia >= inicio && dia <= final;
+      }),
+      'chave'
+    );
+  const atual = noPeriodo(inicioAtual, fimAtual);
+  const anterior = noPeriodo(inicioAnterior, fimAnterior);
+
+  let custoAnterior = 0;
+  let custoAtual = 0;
+  let produtosComparados = 0;
+  for (const [chave, compras] of Object.entries(anterior)) {
+    const agora = atual[chave];
+    if (!agora) continue;
+    const quantidade = sumBy(compras, 'quantidade') || compras.length;
+    custoAnterior += meanBy(compras, 'precoUnitario') * quantidade;
+    custoAtual += meanBy(agora, 'precoUnitario') * quantidade;
+    produtosComparados++;
+  }
+
+  if (produtosComparados === 0 || custoAnterior <= 0) return null;
+
+  return {
+    percentual: arredondar((custoAtual / custoAnterior - 1) * 100),
+    produtosComparados,
+    periodoAtual: { inicio: inicioAtual, fim: fimAtual },
+    periodoAnterior: { inicio: inicioAnterior, fim: fimAnterior },
+  };
 };
 
 /**

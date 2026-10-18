@@ -12,8 +12,14 @@ Este documento registra o que ainda falta para levar o aplicativo de uma versão
 - Lista de compras com estimativa de cesta por mercado.
 - Relatório PDF compartilhável.
 - Geolocalização opcional dos estabelecimentos.
-- Alertas locais de queda de preço.
 - Camada `NfceProvider` configurável para API externa da SEFAZ.
+- Tutorial na primeira abertura.
+- Revisão do cupom antes de salvar, com correção do nome do mercado e dos produtos.
+- Correção manual de nomes de produtos, lembrada nos próximos cupons.
+- Alertas de preço configuráveis: produtos monitorados, preço-alvo, queda mínima, sem avisos repetidos e histórico de alertas enviados.
+- Distância até o mercado no score de recomendação.
+- Gráfico de evolução de preço por produto, projeção de gastos do mês e inflação da cesta pessoal.
+- Integração contínua (lint, checagem de tipos e testes) no GitHub Actions.
 
 ## Próxima prioridade: backend e produção
 
@@ -36,32 +42,20 @@ Este documento registra o que ainda falta para levar o aplicativo de uma versão
 
 ### 3. Normalização inteligente de produtos
 
-- Criar aliases para nomes equivalentes.
-- Normalizar marca, categoria, unidade e embalagem.
-- Permitir correção manual pelo usuário.
+- Normalizar marca, categoria, unidade e embalagem (ex.: "ARROZ TIO JOAO 5KG").
+- Agrupar automaticamente nomes equivalentes sem código de barras.
 - Avaliar uma camada de ML somente após formar uma base de dados confiável.
 
-### 4. Alertas de preço
+### 4. Geolocalização e recomendação
 
-- Criar tela de produtos monitorados.
-- Permitir definir preço-alvo e percentual mínimo de queda.
-- Evitar notificações duplicadas.
-- Exibir histórico de alertas enviados.
-
-### 5. Geolocalização e recomendação
-
-- Incorporar distância ao score de recomendação.
-- Ordenar mercados por combinação de preço, distância e frequência.
+- Ordenar o ranking de mercados por combinação de preço, distância e frequência.
 - Permitir corrigir endereço ou coordenadas manualmente.
 - Considerar rotas e tempo de deslocamento em uma etapa futura.
 
-### 6. Análises avançadas
+### 5. Análises avançadas
 
-- Gráfico de evolução de preço por produto.
-- Comparação entre períodos.
-- Projeção de gastos mensais.
+- Comparação livre entre dois períodos escolhidos pelo usuário.
 - Exportação de análises filtradas.
-- Indicadores de inflação da cesta pessoal.
 
 ## Validação e qualidade
 
@@ -76,8 +70,7 @@ Este documento registra o que ainda falta para levar o aplicativo de uma versão
 1. Backend, autenticação e sincronização.
 2. API fiscal real e cobertura dos estados.
 3. Testes em dispositivos e endurecimento de segurança.
-4. Alertas configuráveis e recomendação por distância.
-5. Normalização inteligente e análises avançadas.
+4. Normalização inteligente, recomendação e análises restantes.
 
 ## Critérios para considerar a versão de produção pronta
 
