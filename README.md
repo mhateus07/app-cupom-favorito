@@ -20,11 +20,13 @@ Aplicativo mobile para escanear cupons fiscais (NFCe), armazenar dados de compra
 - **React Native** + **Expo** - Framework mobile cross-platform
 - **TypeScript** - Type safety
 - **React Navigation** - Navegação
-- **Expo Camera + Barcode Scanner** - Escaneamento de QR Code
+- **Expo Camera** (`CameraView`) - Escaneamento de QR Code
 - **Expo SQLite** - Banco de dados local
 - **React Native Paper** - UI Components
 - **Lodash** - Utilitários de manipulação de dados
 - **date-fns** - Manipulação de datas
+- **fast-xml-parser** + **axios** - Consulta e leitura da NFC-e
+- **Jest** (`jest-expo`) - Testes
 
 ## Estrutura do Projeto
 
@@ -39,23 +41,23 @@ app_cupom_favorito/
 │   │   ├── HistoryScreen.tsx
 │   │   └── StatsScreen.tsx
 │   ├── services/           # Lógica de negócio
-│   │   ├── scanner/
-│   │   ├── parser/         # Parser de cupom fiscal
+│   │   ├── sefaz/          # Consulta à SEFAZ e leitura do XML/HTML da NFC-e
+│   │   ├── parser/         # QR Code, chave de acesso e conversão para CupomData
 │   │   ├── analytics/      # Engine de análise
 │   │   └── database/       # Camada de dados SQLite
 │   ├── models/             # Tipos TypeScript
 │   ├── hooks/              # Custom hooks
 │   │   └── useScanner.ts
-│   ├── navigation/         # Configuração de rotas
+│   ├── navigation/         # Rotas e tipos de parâmetros
 │   └── utils/              # Utilitários
-└── tests/                  # Testes
+└── tests/                  # Testes (Jest) do parser e das análises
 ```
 
 ## Como Executar
 
 ### Pré-requisitos
 
-- Node.js (v16 ou superior)
+- Node.js 20 ou superior
 - npm ou yarn
 - Expo Go app no seu dispositivo móvel (iOS/Android)
 
@@ -89,6 +91,8 @@ npm run ios        # Abre no simulador iOS
 npm run web        # Abre no navegador
 npm run lint       # Executa o linter
 npm run lint:fix   # Corrige problemas do linter
+npm run typecheck  # Verifica os tipos (tsc)
+npm test           # Executa os testes
 npm run format     # Formata código com Prettier
 ```
 
@@ -99,7 +103,8 @@ npm run format     # Formata código com Prettier
 1. Abra o app e vá para a aba "Histórico"
 2. Toque no botão "+" (FAB) para abrir o scanner
 3. Posicione o QR Code do cupom fiscal dentro da moldura
-4. O app processará e salvará automaticamente os dados
+4. O app consulta a SEFAZ e salva o cupom. Se o portal não devolver os dados (fora do ar,
+   CAPTCHA ou layout não suportado), o app mostra o motivo e **não salva nada**
 
 ### 2. Visualizar Detalhes
 
@@ -144,18 +149,24 @@ npm run format     # Formata código com Prettier
 
 ## Limitações Atuais
 
-1. **Parser de Cupom**: Atualmente usa dados mockados. Para produção, seria necessário:
-   - Integrar com API da SEFAZ para obter XML completo
-   - Implementar parser XML robusto
-   - Tratar diferentes formatos de NFCe/NFe por estado
+1. **Consulta à SEFAZ**: o app lê o XML (quando o portal o fornece) e o HTML no layout
+   padrão da consulta pública, usado pela maioria dos estados. Portais com CAPTCHA ou layout
+   próprio (ex.: MG) ainda não são suportados. Para cobertura completa, integre uma API
+   comercial (Focus NFe, Webmania). Detalhes em `docs/INTEGRACAO_SEFAZ.md`.
 
-2. **Normalização de Produtos**: Produtos com nomes diferentes podem ser tratados como itens separados
+2. **Comparação de Produtos**: produtos com código de barras (GTIN) são comparados entre
+   mercados pelo código. Os sem código (pão, hortifrúti) são comparados pelo nome, então
+   nomes diferentes para o mesmo produto contam como itens separados.
 
-3. **Geolocalização**: Não implementado ainda (planejado para futuras versões)
+3. **Ranking de Mercados**: compara o preço dos mesmos produtos entre mercados. Um mercado só
+   entra na comparação depois que você comprar lá algum produto que também comprou em outro.
+
+4. **Geolocalização**: Não implementado ainda (planejado para futuras versões)
 
 ## Próximas Funcionalidades
 
-- [ ] Integração com API SEFAZ para dados reais
+- [x] Consulta à SEFAZ para dados reais (XML e HTML padrão)
+- [ ] Suporte a portais com layout próprio (MG) e API comercial
 - [ ] Sistema de normalização inteligente de produtos (ML)
 - [ ] Geolocalização para recomendação baseada em distância
 - [ ] Exportação de dados (CSV, PDF)

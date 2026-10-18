@@ -1,94 +1,129 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, Alert } from 'react-native';
-import { ActivityIndicator, Text } from 'react-native-paper';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, StyleSheet, Alert, Animated, Easing } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { Scanner } from '../components/Scanner';
-import { parseQRCode, parseNFCeXML } from '../services/parser/cupomParser';
-import { insertCupom } from '../services/database/database';
-import { CupomData } from '../models/types';
+import { Texto } from '../components/ui';
+import {
+  CupomIndisponivelError,
+  obterDadosCupom,
+  parseQRCode,
+} from '../services/parser/cupomParser';
+import { cupomExiste, insertCupom } from '../services/database/database';
+import { RootScreenProps } from '../navigation/types';
+import { colors, radius, space } from '../theme';
+import { formatarChaveAcesso } from '../utils/formatacao';
 
-interface ScanScreenProps {
-  navigation: any;
-}
+/** Barra de progresso indeterminada (a consulta à SEFAZ não informa andamento) */
+const Progresso: React.FC = () => {
+  const avanco = useRef(new Animated.Value(0)).current;
+  const [largura, setLargura] = useState(0);
 
-export const ScanScreen: React.FC<ScanScreenProps> = ({ navigation }) => {
-  const [isProcessing, setIsProcessing] = useState(false);
+  useEffect(() => {
+    const animacao = Animated.loop(
+      Animated.timing(avanco, {
+        toValue: 1,
+        duration: 1400,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      })
+    );
+    animacao.start();
+    return () => animacao.stop();
+  }, [avanco]);
 
-  const handleScan = async (data: string, type: string) => {
-    setIsProcessing(true);
+  const translateX = avanco.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-largura * 0.4, largura],
+  });
 
-    try {
-      console.log('QR Code escaneado:', data);
+  return (
+    <View style={styles.trilho} onLayout={e => setLargura(e.nativeEvent.layout.width)}>
+      <Animated.View
+        style={[styles.progresso, { width: largura * 0.4, transform: [{ translateX }] }]}
+      />
+    </View>
+  );
+};
 
-      // Parse QR Code
+export const ScanScreen: React.FC<RootScreenProps<'Scan'>> = ({ navigation }) => {
+  const [chaveLida, setChaveLida] = useState<string | null>(null);
+
+  // A câmera fica pausada até o usuário fechar o alerta, para não ler o mesmo QR Code de novo
+  const alertarEContinuar = (titulo: string, mensagem: string) => {
+    Alert.alert(titulo, mensagem, [{ text: 'OK', onPress: () => setChaveLida(null) }], {
+      cancelable: false,
+    });
+  };
+
+  const handleScan = useCallback(
+    async (data: string) => {
       const parsedQR = parseQRCode(data);
 
       if (!parsedQR.isValid) {
-        Alert.alert(
-          'QR Code Inválido',
-          'Este não parece ser um QR Code de cupom fiscal válido. Por favor, tente novamente.'
+        setChaveLida('');
+        alertarEContinuar(
+          'QR Code inválido',
+          'Este não parece ser o QR Code de um cupom fiscal (NFC-e). Tente novamente.'
         );
-        setIsProcessing(false);
         return;
       }
 
-      // Parse NFCe e obter dados do cupom
-      const cupomData = await parseNFCeXML(parsedQR.chaveAcesso, parsedQR.url);
+      setChaveLida(parsedQR.chaveAcesso);
 
-      if (!cupomData) {
-        Alert.alert('Erro', 'Não foi possível processar os dados do cupom fiscal.');
-        setIsProcessing(false);
-        return;
+      try {
+        if (await cupomExiste(parsedQR.chaveAcesso)) {
+          alertarEContinuar('Cupom já existe', 'Este cupom já foi escaneado anteriormente.');
+          return;
+        }
+
+        const cupomData = await obterDadosCupom(parsedQR.chaveAcesso, parsedQR.url);
+        const cupomId = await insertCupom(cupomData);
+
+        navigation.replace('CupomDetail', { cupomId });
+      } catch (error) {
+        console.error('Erro ao processar cupom:', error);
+
+        if (error instanceof CupomIndisponivelError) {
+          alertarEContinuar('Não foi possível ler o cupom', error.message);
+        } else if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+          alertarEContinuar('Cupom já existe', 'Este cupom já foi escaneado anteriormente.');
+        } else {
+          alertarEContinuar('Erro', 'Ocorreu um erro ao processar o cupom. Tente novamente.');
+        }
       }
+    },
+    [navigation]
+  );
 
-      // Salvar no banco de dados
-      const cupomId = await insertCupom(cupomData);
-
-      // Navegar para tela de detalhes
-      Alert.alert('Sucesso!', 'Cupom salvo com sucesso!', [
-        {
-          text: 'Ver Detalhes',
-          onPress: () => navigation.navigate('CupomDetail', { cupomId }),
-        },
-        {
-          text: 'Escanear Outro',
-          onPress: () => setIsProcessing(false),
-        },
-      ]);
-    } catch (error: any) {
-      console.error('Erro ao processar cupom:', error);
-
-      // Verificar se é erro de duplicação
-      if (error.message?.includes('UNIQUE constraint failed')) {
-        Alert.alert(
-          'Cupom Já Existe',
-          'Este cupom já foi escaneado anteriormente.',
-          [
-            {
-              text: 'OK',
-              onPress: () => setIsProcessing(false),
-            },
-          ]
-        );
-      } else {
-        Alert.alert('Erro', 'Ocorreu um erro ao processar o cupom. Tente novamente.');
-      }
-
-      setIsProcessing(false);
-    }
-  };
-
-  if (isProcessing) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" />
-        <Text style={styles.loadingText}>Processando cupom...</Text>
-      </View>
-    );
-  }
+  const processando = chaveLida !== null;
 
   return (
     <View style={styles.container}>
-      <Scanner onScan={handleScan} onClose={() => navigation.goBack()} />
+      <StatusBar style="light" />
+      <Scanner
+        onScan={handleScan}
+        onClose={() => navigation.goBack()}
+        pausado={processando}
+        rodape={
+          chaveLida ? (
+            <View style={styles.painel}>
+              <View style={styles.painelTitulo}>
+                <View style={styles.marcador} />
+                <Texto forte cor={colors.tinta}>
+                  QR lido · consultando a SEFAZ
+                </Texto>
+              </View>
+              <Texto variante="label" cor={colors.nevoa} style={styles.rotulo}>
+                Chave de acesso
+              </Texto>
+              <Texto variante="numberSmall" cor={colors.tinta}>
+                {formatarChaveAcesso(chaveLida)}
+              </Texto>
+              <Progresso />
+            </View>
+          ) : null
+        }
+      />
     </View>
   );
 };
@@ -96,15 +131,39 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.tinta,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  painel: {
+    backgroundColor: colors.papel,
+    borderRadius: radius.sheet,
+    padding: space.xl,
+  },
+  painelTitulo: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    gap: space.md,
   },
-  loadingText: {
-    marginTop: 20,
-    fontSize: 16,
+  marcador: {
+    width: 14,
+    height: 14,
+    backgroundColor: colors.lima,
+    borderWidth: 1.5,
+    borderColor: colors.tinta,
+  },
+  rotulo: {
+    marginTop: space.lg,
+    marginBottom: space.xs,
+  },
+  trilho: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.bobina,
+    marginTop: space.lg,
+    overflow: 'hidden',
+  },
+  progresso: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.tinta,
   },
 });

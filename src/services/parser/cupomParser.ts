@@ -1,10 +1,12 @@
 import { CupomData, ProdutoData, EstabelecimentoData } from '../../models/types';
+import { consultarNFCe } from '../sefaz/sefazService';
 import {
-  consultarNFCe,
-  parseXML,
+  NFCeData,
   extractNFCeData,
-  getUFFromChave,
-} from '../sefaz/sefazService';
+  extractNFCeDataFromHTML,
+  gtinValido,
+  parseXML,
+} from '../sefaz/nfceExtractor';
 
 export interface ParsedQRCode {
   chaveAcesso: string;
@@ -13,30 +15,50 @@ export interface ParsedQRCode {
 }
 
 /**
+ * Erro com mensagem pronta para ser exibida ao usuário
+ */
+export class CupomIndisponivelError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CupomIndisponivelError';
+  }
+}
+
+/**
+ * Calcula o dígito verificador (módulo 11) dos 43 primeiros dígitos da chave de acesso
+ */
+export const calcularDigitoVerificador = (chave43: string): number => {
+  let soma = 0;
+  let peso = 2;
+  for (let i = chave43.length - 1; i >= 0; i--) {
+    soma += Number(chave43[i]) * peso;
+    peso = peso === 9 ? 2 : peso + 1;
+  }
+  const resto = soma % 11;
+  return resto < 2 ? 0 : 11 - resto;
+};
+
+export const isChaveAcessoValida = (chave: string): boolean =>
+  /^\d{44}$/.test(chave) && calcularDigitoVerificador(chave.slice(0, 43)) === Number(chave[43]);
+
+/**
  * Parse QR Code de NFCe
- * Formato típico: http://www.fazenda.sp.gov.br/nfce/qrcode?p=CHAVE_ACESSO|...
+ * Formato típico: https://www.nfce.fazenda.sp.gov.br/...?p=CHAVE_ACESSO|2|1|1|HASH
  */
 export const parseQRCode = (qrCodeData: string): ParsedQRCode => {
-  try {
-    // Extrair chave de acesso (44 dígitos)
-    const chaveMatch = qrCodeData.match(/\d{44}/);
-    const chaveAcesso = chaveMatch ? chaveMatch[0] : '';
+  const data = qrCodeData.trim();
 
-    const isValid = chaveAcesso.length === 44;
+  // Prioriza o parâmetro "p" (padrão do QR Code da NFC-e); senão, qualquer sequência de 44 dígitos
+  const candidatos = [data.match(/[?&]p=(\d{44})/)?.[1], ...(data.match(/\d{44}/g) || [])].filter(
+    (c): c is string => Boolean(c)
+  );
+  const chaveAcesso = candidatos.find(isChaveAcessoValida) || '';
 
-    return {
-      chaveAcesso,
-      url: qrCodeData,
-      isValid,
-    };
-  } catch (error) {
-    console.error('Erro ao parsear QR Code:', error);
-    return {
-      chaveAcesso: '',
-      url: qrCodeData,
-      isValid: false,
-    };
-  }
+  return {
+    chaveAcesso,
+    url: data,
+    isValid: chaveAcesso !== '',
+  };
 };
 
 /**
@@ -61,94 +83,100 @@ export const extractInfoFromChave = (chaveAcesso: string) => {
 };
 
 /**
- * Parse XML da NFCe
- * Tenta consultar dados reais na SEFAZ, com fallback para dados mockados
+ * Extrai os dados da NFC-e do conteúdo retornado pela SEFAZ (XML ou HTML).
+ * Retorna null se nenhum formato conhecido for encontrado.
  */
-export const parseNFCeXML = async (
-  chaveAcesso: string,
-  url: string
-): Promise<CupomData | null> => {
-  try {
-    console.log('🔍 Iniciando consulta NFCe...');
-    console.log('Chave:', chaveAcesso);
-    console.log('URL:', url);
-
-    // Tentar consultar na SEFAZ
-    const sefazResult = await consultarNFCe(url, chaveAcesso);
-
-    if (sefazResult.success && sefazResult.xmlContent) {
-      console.log('✅ XML obtido da SEFAZ! Fazendo parsing...');
-
-      try {
-        // Parsear XML
-        const parsedXML = parseXML(sefazResult.xmlContent);
-        const nfceData = extractNFCeData(parsedXML);
-
-        // Converter para formato CupomData
-        const cupomData = convertNFCeDataToCupomData(nfceData, chaveAcesso, url);
-        console.log('✅ Dados extraídos com sucesso!');
-        return cupomData;
-      } catch (parseError) {
-        console.error('❌ Erro ao parsear XML, usando dados mockados:', parseError);
-        // Fallback para mock
-        return createMockCupomDataFromChave(chaveAcesso, url);
-      }
-    } else {
-      console.warn(
-        '⚠️ Não foi possível obter XML da SEFAZ:',
-        sefazResult.error
-      );
-      console.log('📝 Usando dados mockados para teste');
-
-      // Fallback para dados mockados
-      return createMockCupomDataFromChave(chaveAcesso, url);
+export const extrairDadosNFCe = (conteudo: {
+  xmlContent?: string;
+  htmlContent?: string;
+}): NFCeData | null => {
+  if (conteudo.xmlContent) {
+    try {
+      return extractNFCeData(parseXML(conteudo.xmlContent));
+    } catch (error) {
+      console.warn('XML da NFC-e inválido, tentando o HTML:', error);
     }
-  } catch (error) {
-    console.error('❌ Erro geral ao processar NFCe:', error);
-    console.log('📝 Usando dados mockados para teste');
-
-    // Fallback final para mock
-    return createMockCupomDataFromChave(chaveAcesso, url);
   }
+
+  if (conteudo.htmlContent) {
+    return extractNFCeDataFromHTML(conteudo.htmlContent);
+  }
+
+  return null;
 };
 
 /**
- * Converte dados extraídos do XML NFCe para o formato CupomData
+ * Consulta a NFC-e na SEFAZ e devolve os dados do cupom.
+ * Lança CupomIndisponivelError quando não for possível obter dados reais —
+ * nunca devolve dados inventados.
  */
-const convertNFCeDataToCupomData = (
-  nfceData: any,
+export const obterDadosCupom = async (chaveAcesso: string, url: string): Promise<CupomData> => {
+  const resultado = await consultarNFCe(url, chaveAcesso);
+
+  if (!resultado.success) {
+    throw new CupomIndisponivelError(
+      resultado.error || 'Não foi possível consultar o cupom na SEFAZ.'
+    );
+  }
+
+  const nfceData = extrairDadosNFCe(resultado);
+
+  if (!nfceData || nfceData.produtos.length === 0) {
+    throw new CupomIndisponivelError(
+      `A SEFAZ${resultado.uf ? `/${resultado.uf}` : ''} respondeu, mas não foi possível ler os ` +
+        'itens do cupom. O portal pode estar pedindo CAPTCHA ou usar um formato ainda não suportado.'
+    );
+  }
+
+  return convertNFCeDataToCupomData(nfceData, chaveAcesso, url);
+};
+
+const arredondar = (valor: number): number => Math.round(valor * 100) / 100;
+
+/**
+ * Converte dados extraídos da NFCe para o formato CupomData
+ */
+export const convertNFCeDataToCupomData = (
+  nfceData: NFCeData,
   chaveAcesso: string,
   url: string
 ): CupomData => {
+  const info = extractInfoFromChave(chaveAcesso);
+  const cnpjEmitente = nfceData.emitente.cnpj.replace(/\D/g, '');
+
   const estabelecimento: EstabelecimentoData = {
-    nome: nfceData.emitente.nomeFantasia || nfceData.emitente.nome,
-    cnpj: nfceData.emitente.cnpj,
-    endereco: nfceData.emitente.endereco,
-    cidade: nfceData.emitente.cidade,
-    estado: nfceData.emitente.uf,
+    nome: nfceData.emitente.nomeFantasia || nfceData.emitente.nome || 'Estabelecimento',
+    // O CNPJ também faz parte da chave de acesso; usa-o se a página não informar
+    cnpj: cnpjEmitente ? cnpjEmitente.padStart(14, '0') : info.cnpj,
+    endereco: nfceData.emitente.endereco || undefined,
+    cidade: nfceData.emitente.cidade || undefined,
+    estado: nfceData.emitente.uf || undefined,
   };
 
-  const produtos: ProdutoData[] = nfceData.produtos.map((p: any) => ({
-    nome: normalizeProdutoNome(p.nome),
-    codigo: p.ean || p.codigo,
-    preco: p.valorUnitario,
-    quantidade: p.quantidade,
-    desconto: p.desconto,
-    precoFinal: p.valorTotal,
-  }));
+  const produtos: ProdutoData[] = nfceData.produtos.map(p => {
+    const gtin = gtinValido(p.ean);
+    const bruto = p.valorTotal || p.valorUnitario * p.quantidade;
+    return {
+      nome: normalizeProdutoNome(p.nome),
+      codigo: gtin || p.codigo,
+      gtin,
+      preco: p.valorUnitario,
+      quantidade: p.quantidade,
+      desconto: p.desconto,
+      precoFinal: arredondar(bruto - p.desconto),
+    };
+  });
 
-  // Pegar a primeira forma de pagamento (ou combinar se houver múltiplas)
   const formaPagamento =
-    nfceData.pagamentos.length > 0
-      ? nfceData.pagamentos[0].tipo
-      : 'Não informado';
+    [...new Set(nfceData.pagamentos.map(p => p.tipo).filter(Boolean))].join(' + ') ||
+    'Não informado';
 
   return {
     chaveAcesso,
     qrCode: url,
     estabelecimento,
     produtos,
-    data: nfceData.dataEmissao,
+    data: nfceData.dataEmissao || `20${info.anoMes.slice(0, 2)}-${info.anoMes.slice(2)}-01`,
     subtotal: nfceData.totais.subtotal,
     descontoTotal: nfceData.totais.desconto,
     total: nfceData.totais.total,
@@ -157,77 +185,14 @@ const convertNFCeDataToCupomData = (
 };
 
 /**
- * Criar dados mockados para teste (fallback quando não conseguir dados reais)
- */
-const createMockCupomDataFromChave = (
-  chaveAcesso: string,
-  url: string
-): CupomData => {
-  const info = extractInfoFromChave(chaveAcesso);
-  const uf = getUFFromChave(chaveAcesso) || 'SP';
-  const estabelecimento: EstabelecimentoData = {
-    nome: 'Supermercado Exemplo',
-    cnpj: info.cnpj,
-    endereco: 'Rua Exemplo, 123',
-    cidade: uf === 'SP' ? 'São Paulo' : uf === 'RJ' ? 'Rio de Janeiro' : 'Cidade Exemplo',
-    estado: uf,
-  };
-
-  const produtos: ProdutoData[] = [
-    {
-      nome: 'Arroz Tipo 1 5kg',
-      codigo: '7891234567890',
-      preco: 25.9,
-      quantidade: 1,
-      desconto: 0,
-      precoFinal: 25.9,
-    },
-    {
-      nome: 'Feijão Preto 1kg',
-      codigo: '7891234567891',
-      preco: 8.5,
-      quantidade: 2,
-      desconto: 0.5,
-      precoFinal: 16.5,
-    },
-    {
-      nome: 'Óleo de Soja 900ml',
-      codigo: '7891234567892',
-      preco: 6.99,
-      quantidade: 1,
-      desconto: 0,
-      precoFinal: 6.99,
-    },
-  ];
-
-  const subtotal = produtos.reduce((sum, p) => sum + p.preco * p.quantidade, 0);
-  const descontoTotal = produtos.reduce((sum, p) => sum + p.desconto, 0);
-  const total = subtotal - descontoTotal;
-
-  return {
-    chaveAcesso,
-    qrCode: url,
-    estabelecimento,
-    produtos,
-    data: new Date().toISOString(),
-    subtotal,
-    descontoTotal,
-    total,
-    formaPagamento: 'Dinheiro',
-  };
-};
-
-/**
- * Normaliza nome de produto (remove acentos, capitaliza, etc)
+ * Normaliza nome de produto para exibição (espaços e capitalização), mantendo os acentos
  */
 export const normalizeProdutoNome = (nome: string): string => {
   return nome
     .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Remove acentos
-    .replace(/\s+/g, ' ') // Remove espaços extras
+    .toLocaleLowerCase('pt-BR')
+    .replace(/\s+/g, ' ')
     .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .map(word => word.charAt(0).toLocaleUpperCase('pt-BR') + word.slice(1))
     .join(' ');
 };
