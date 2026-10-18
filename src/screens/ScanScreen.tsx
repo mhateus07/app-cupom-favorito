@@ -8,10 +8,12 @@ import {
   obterDadosCupom,
   parseQRCode,
 } from '../services/parser/cupomParser';
-import { cupomExiste, insertCupom } from '../services/database/database';
+import { cupomExiste, getAllCupons, insertCupom } from '../services/database/database';
 import { RootScreenProps } from '../navigation/types';
 import { colors, radius, space } from '../theme';
 import { formatarChaveAcesso } from '../utils/formatacao';
+import { compararPrecoProduto } from '../services/analytics/analyticsService';
+import { agendarAlertasDeQueda } from '../services/notifications/priceAlertService';
 
 /** Barra de progresso indeterminada (a consulta à SEFAZ não informa andamento) */
 const Progresso: React.FC = () => {
@@ -47,6 +49,11 @@ const Progresso: React.FC = () => {
 
 export const ScanScreen: React.FC<RootScreenProps<'Scan'>> = ({ navigation }) => {
   const [chaveLida, setChaveLida] = useState<string | null>(null);
+  const consultaRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => consultaRef.current?.abort();
+  }, []);
 
   // A câmera fica pausada até o usuário fechar o alerta, para não ler o mesmo QR Code de novo
   const alertarEContinuar = (titulo: string, mensagem: string) => {
@@ -69,6 +76,8 @@ export const ScanScreen: React.FC<RootScreenProps<'Scan'>> = ({ navigation }) =>
       }
 
       setChaveLida(parsedQR.chaveAcesso);
+      const controller = new AbortController();
+      consultaRef.current = controller;
 
       try {
         if (await cupomExiste(parsedQR.chaveAcesso)) {
@@ -76,12 +85,38 @@ export const ScanScreen: React.FC<RootScreenProps<'Scan'>> = ({ navigation }) =>
           return;
         }
 
-        const cupomData = await obterDadosCupom(parsedQR.chaveAcesso, parsedQR.url);
+        const historicoAntes = await getAllCupons();
+        const cupomData = await obterDadosCupom(parsedQR.chaveAcesso, parsedQR.url, {
+          signal: controller.signal,
+        });
         const cupomId = await insertCupom(cupomData);
+
+        const alertas = cupomData.produtos.flatMap(produto => {
+          const precoAtual =
+            produto.quantidade > 0 ? produto.precoFinal / produto.quantidade : produto.preco;
+          const anterior = compararPrecoProduto(produto.nome, historicoAntes).find(
+            preco => preco.estabelecimento !== cupomData.estabelecimento.nome
+          );
+          if (!anterior || precoAtual >= anterior.preco * 0.95) return [];
+          return [
+            {
+              produto: produto.nome,
+              mercado: cupomData.estabelecimento.nome,
+              precoAnterior: anterior.preco,
+              precoAtual,
+              percentual: Math.round((1 - precoAtual / anterior.preco) * 100),
+            },
+          ];
+        });
+        await agendarAlertasDeQueda(alertas).catch(error =>
+          console.warn('Não foi possível agendar alerta de preço:', error)
+        );
 
         navigation.replace('CupomDetail', { cupomId });
       } catch (error) {
         console.error('Erro ao processar cupom:', error);
+
+        if (controller.signal.aborted) return;
 
         if (error instanceof CupomIndisponivelError) {
           alertarEContinuar('Não foi possível ler o cupom', error.message);
@@ -90,6 +125,8 @@ export const ScanScreen: React.FC<RootScreenProps<'Scan'>> = ({ navigation }) =>
         } else {
           alertarEContinuar('Erro', 'Ocorreu um erro ao processar o cupom. Tente novamente.');
         }
+      } finally {
+        if (consultaRef.current === controller) consultaRef.current = null;
       }
     },
     [navigation]

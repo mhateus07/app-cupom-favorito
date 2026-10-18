@@ -7,13 +7,24 @@ Aplicativo mobile para escanear cupons fiscais (NFCe), armazenar dados de compra
 - **Escaneamento de Cupons**: Leia QR Codes de cupons fiscais usando a câmera do dispositivo
 - **Armazenamento Local**: Todos os dados salvos localmente com SQLite
 - **Histórico de Compras**: Visualize todos os cupons escaneados
+- **Busca e filtros**: Pesquise por mercado ou produto e filtre por estabelecimento
+- **Organização**: Favorite cupons, adicione observações e remova registros
+- **Lista de compras**: Crie uma lista local, marque itens comprados e limpe concluídos
+- **Exportação e backup**: Compartilhe CSV, exporte JSON e restaure backups
+- **Relatório PDF**: Gere e compartilhe um relatório resumido com todos os itens
+- **Filtros avançados**: Filtre o histórico por período e valor máximo
 - **Análises Inteligentes**:
   - Qual mercado é mais barato
   - Qual produto é mais barato e em qual mercado
   - Ranking de estabelecimentos por desconto
   - Produtos mais comprados
   - Economia com descontos
+  - Evolução mensal com gráfico visual
 - **Recomendações**: Sistema que sugere onde comprar baseado no histórico
+- **Comparação de produtos**: Consulte o histórico de preços por mercado
+- **Cesta inteligente**: Estime o total da lista em cada mercado usando preços históricos
+- **Localização opcional**: Calcule a distância até mercados geocodificados
+- **Alertas locais**: Receba notificações quando um produto aparecer com queda relevante
 
 ## Stack Tecnológica
 
@@ -22,7 +33,10 @@ Aplicativo mobile para escanear cupons fiscais (NFCe), armazenar dados de compra
 - **React Navigation** - Navegação
 - **Expo Camera** (`CameraView`) - Escaneamento de QR Code
 - **Expo SQLite** - Banco de dados local
-- **React Native Paper** - UI Components
+- **Expo Document Picker/Sharing** - Restauração e compartilhamento de arquivos
+- **Expo Print** - Geração de relatórios PDF
+- **Expo Location/Notifications** - Distância opcional e alertas locais
+- **Componentes próprios** - UI alinhada ao manual de marca em `src/components/ui.tsx`
 - **Lodash** - Utilitários de manipulação de dados
 - **date-fns** - Manipulação de datas
 - **fast-xml-parser** + **axios** - Consulta e leitura da NFC-e
@@ -120,6 +134,11 @@ npm run format     # Formata código com Prettier
    - Ranking de mercados mais baratos
    - Produtos mais comprados
 
+Toque em um produto na lista de produtos mais comprados para abrir seu histórico de preços por
+mercado. Na tela de cupons, use a busca e os filtros avançados para encontrar registros, abra
+**Lista** para montar uma lista de compras ou **Exportar** para gerar CSV, backup JSON ou PDF.
+Na lista, use **Comparar cesta** para estimar o custo nos mercados do histórico.
+
 ## Modelos de Dados
 
 ### Cupom
@@ -132,6 +151,8 @@ npm run format     # Formata código com Prettier
   data: string;             // Data da compra
   total: number;            // Valor total
   formaPagamento: string;   // Como foi pago
+  favorito?: boolean;        // Marcado pelo usuário
+  observacao?: string;       // Nota pessoal
 }
 ```
 
@@ -144,6 +165,7 @@ npm run format     # Formata código com Prettier
   quantidade: number;
   desconto: number;
   precoFinal: number;
+  unidade?: string;          // UN, KG, L etc.
 }
 ```
 
@@ -161,20 +183,34 @@ npm run format     # Formata código com Prettier
 3. **Ranking de Mercados**: compara o preço dos mesmos produtos entre mercados. Um mercado só
    entra na comparação depois que você comprar lá algum produto que também comprou em outro.
 
-4. **Geolocalização**: Não implementado ainda (planejado para futuras versões)
+4. **Integração externa**: Consultas dependem do portal público de cada estado; portais com
+   CAPTCHA/layout próprio ainda podem falhar. O app possui retry, cancelamento e aceita um
+   `NfceProvider` injetado para API comercial/backend. Veja `docs/INTEGRACAO_SEFAZ.md`.
+5. **Sincronização**: Os dados continuam locais ao dispositivo; exporte um backup antes de
+   trocar ou desinstalar o aparelho.
 
 ## Próximas Funcionalidades
 
+O roadmap detalhado de produção está em [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
 - [x] Consulta à SEFAZ para dados reais (XML e HTML padrão)
-- [ ] Suporte a portais com layout próprio (MG) e API comercial
+- [x] Busca e filtros básicos no histórico
+- [x] Exportação CSV e backup/restauração JSON
+- [x] Lista de compras local
+- [x] Comparação detalhada de preços por produto
+- [x] Favoritos, observações e exclusão de cupons
+- [x] Evolução mensal de gastos
+- [x] Gráfico visual de evolução mensal
+- [x] Filtros avançados por data e faixa de valor
+- [x] Geolocalização opcional dos mercados
+- [x] Notificações locais de queda de preço
+- [x] Lista de compras inteligente com cálculo de cesta
+- [x] Relatório PDF compartilhável
+- [x] Camada configurável para API externa da SEFAZ
+- [ ] Suporte específico a todos os portais com layout próprio (ex.: MG)
 - [ ] Sistema de normalização inteligente de produtos (ML)
-- [ ] Geolocalização para recomendação baseada em distância
-- [ ] Exportação de dados (CSV, PDF)
-- [ ] Notificações de ofertas
-- [ ] Gráficos de evolução de preços ao longo do tempo
-- [ ] Busca e filtros avançados
-- [ ] Lista de compras inteligente
-- [ ] Compartilhamento de análises
+- [x] Lista de compras básica
+- [x] Compartilhamento de análises via PDF
 
 ## Contribuindo
 

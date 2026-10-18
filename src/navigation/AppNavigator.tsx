@@ -7,6 +7,8 @@ import { HistoryScreen } from '../screens/HistoryScreen';
 import { StatsScreen } from '../screens/StatsScreen';
 import { ScanScreen } from '../screens/ScanScreen';
 import { CupomDetailScreen } from '../screens/CupomDetailScreen';
+import { ProductComparisonScreen } from '../screens/ProductComparisonScreen';
+import { ShoppingListScreen } from '../screens/ShoppingListScreen';
 import { RootStackParamList, TabParamList } from './types';
 import { TabBar } from './TabBar';
 import { useTema } from '../theme';
@@ -41,6 +43,8 @@ export const AppNavigator = () => {
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         <RootStack.Screen name="Tabs" component={Tabs} />
         <RootStack.Screen name="CupomDetail" component={CupomDetailScreen} />
+        <RootStack.Screen name="ProductComparison" component={ProductComparisonScreen} />
+        <RootStack.Screen name="ShoppingList" component={ShoppingListScreen} />
         <RootStack.Screen
           name="Scan"
           component={ScanScreen}

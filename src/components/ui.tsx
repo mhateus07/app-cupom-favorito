@@ -4,6 +4,8 @@ import {
   StyleProp,
   StyleSheet,
   Text,
+  TextInput,
+  TextInputProps,
   TextProps,
   TextStyle,
   View,
@@ -111,6 +113,32 @@ export const Botao: React.FC<BotaoProps> = ({
         {titulo}
       </Texto>
     </Pressable>
+  );
+};
+
+interface CampoTextoProps extends TextInputProps {
+  rotulo?: string;
+}
+
+export const CampoTexto: React.FC<CampoTextoProps> = ({ rotulo, style, ...props }) => {
+  const { cores } = useTema();
+  return (
+    <View style={styles.campoTextoContainer}>
+      {rotulo && (
+        <Texto variante="label" cor={cores.textMuted}>
+          {rotulo}
+        </Texto>
+      )}
+      <TextInput
+        {...props}
+        placeholderTextColor={props.placeholderTextColor ?? cores.textMuted}
+        style={[
+          styles.campoTexto,
+          { color: cores.text, backgroundColor: cores.surface, borderColor: cores.border },
+          style,
+        ]}
+      />
+    </View>
   );
 };
 
@@ -318,5 +346,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
+  },
+  campoTextoContainer: {
+    gap: space.xs,
+  },
+  campoTexto: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: radius.button,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    fontFamily: fonts.regular,
+    fontSize: 16,
   },
 });

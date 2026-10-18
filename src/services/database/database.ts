@@ -1,5 +1,11 @@
 import * as SQLite from 'expo-sqlite';
-import { CupomData, EstabelecimentoData, ProdutoData } from '../../models/types';
+import {
+  CupomData,
+  EstabelecimentoData,
+  ItemListaCompra,
+  ListaCompra,
+  ProdutoData,
+} from '../../models/types';
 import { normalizarChaveNome } from '../../utils/texto';
 
 const DB_NAME = 'cupom_favorito.db';
@@ -16,11 +22,16 @@ interface CupomRow {
   desconto_total: number;
   total: number;
   forma_pagamento: string;
+  observacao: string | null;
+  favorito: number;
+  data_importacao: string | null;
   estabelecimento_nome: string;
   cnpj: string;
   endereco: string | null;
   cidade: string | null;
   estado: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 interface ProdutoRow {
@@ -29,6 +40,9 @@ interface ProdutoRow {
   nome: string;
   codigo: string;
   gtin: string | null;
+  unidade: string | null;
+  marca: string | null;
+  categoria: string | null;
   preco: number;
   quantidade: number;
   desconto: number;
@@ -119,6 +133,46 @@ const MIGRATIONS: string[] = [
   -- Produtos de cupons que não existem mais
   DELETE FROM produtos WHERE cupom_id NOT IN (SELECT id FROM cupons);
   `,
+
+  // v3: metadados para comparação, organização e edição pelo usuário
+  `
+  ALTER TABLE produtos ADD COLUMN unidade TEXT;
+  ALTER TABLE produtos ADD COLUMN marca TEXT;
+  ALTER TABLE produtos ADD COLUMN categoria TEXT;
+  ALTER TABLE cupons ADD COLUMN observacao TEXT;
+  ALTER TABLE cupons ADD COLUMN favorito INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE cupons ADD COLUMN data_importacao TEXT;
+  UPDATE cupons SET data_importacao = COALESCE(data_importacao, created_at);
+  `,
+
+  // v4: lista de compras local
+  `
+  CREATE TABLE IF NOT EXISTS listas_compras (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    criada_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizada_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS itens_lista_compras (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lista_id INTEGER NOT NULL,
+    nome TEXT NOT NULL,
+    quantidade REAL NOT NULL DEFAULT 1,
+    comprado INTEGER NOT NULL DEFAULT 0,
+    gtin TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (lista_id) REFERENCES listas_compras (id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_itens_lista_lista ON itens_lista_compras(lista_id);
+  `,
+
+  // v5: coordenadas opcionais para recomendações por proximidade
+  `
+  ALTER TABLE estabelecimentos ADD COLUMN latitude REAL;
+  ALTER TABLE estabelecimentos ADD COLUMN longitude REAL;
+  `,
 ];
 
 /**
@@ -167,13 +221,15 @@ export const upsertEstabelecimento = async (
   // RETURNING devolve o id tanto na inserção quanto na atualização.
   // (lastInsertRowId não é atualizado quando o ON CONFLICT faz UPDATE.)
   const row = await database.getFirstAsync<{ id: number }>(
-    `INSERT INTO estabelecimentos (nome, cnpj, endereco, cidade, estado)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO estabelecimentos (nome, cnpj, endereco, cidade, estado, latitude, longitude)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(cnpj) DO UPDATE SET
        nome = excluded.nome,
        endereco = COALESCE(excluded.endereco, endereco),
        cidade = COALESCE(excluded.cidade, cidade),
-       estado = COALESCE(excluded.estado, estado)
+       estado = COALESCE(excluded.estado, estado),
+       latitude = COALESCE(excluded.latitude, latitude),
+       longitude = COALESCE(excluded.longitude, longitude)
      RETURNING id`,
     [
       estabelecimento.nome,
@@ -181,6 +237,8 @@ export const upsertEstabelecimento = async (
       estabelecimento.endereco || null,
       estabelecimento.cidade || null,
       estabelecimento.estado || null,
+      estabelecimento.latitude ?? null,
+      estabelecimento.longitude ?? null,
     ]
   );
 
@@ -213,8 +271,8 @@ export const insertCupom = async (cupomData: CupomData): Promise<number> => {
       const estabelecimentoId = await upsertEstabelecimento(cupomData.estabelecimento, txn);
 
       const cupomResult = await txn.runAsync(
-        `INSERT INTO cupons (chave_acesso, qr_code, estabelecimento_id, data, subtotal, desconto_total, total, forma_pagamento)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO cupons (chave_acesso, qr_code, estabelecimento_id, data, subtotal, desconto_total, total, forma_pagamento, observacao, favorito, data_importacao)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cupomData.chaveAcesso,
           cupomData.qrCode,
@@ -224,14 +282,17 @@ export const insertCupom = async (cupomData: CupomData): Promise<number> => {
           cupomData.descontoTotal,
           cupomData.total,
           cupomData.formaPagamento,
+          cupomData.observacao || null,
+          cupomData.favorito ? 1 : 0,
+          cupomData.dataImportacao || new Date().toISOString(),
         ]
       );
 
       cupomId = cupomResult.lastInsertRowId;
 
       const insertProduto = await txn.prepareAsync(
-        `INSERT INTO produtos (cupom_id, nome, nome_normalizado, codigo, gtin, preco, quantidade, desconto, preco_final)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO produtos (cupom_id, nome, nome_normalizado, codigo, gtin, unidade, marca, categoria, preco, quantidade, desconto, preco_final)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
 
       try {
@@ -242,6 +303,9 @@ export const insertCupom = async (cupomData: CupomData): Promise<number> => {
             normalizarChaveNome(produto.nome),
             produto.codigo,
             produto.gtin ?? null,
+            produto.unidade ?? null,
+            produto.marca ?? null,
+            produto.categoria ?? null,
             produto.preco,
             produto.quantidade,
             produto.desconto,
@@ -261,11 +325,30 @@ export const insertCupom = async (cupomData: CupomData): Promise<number> => {
   }
 };
 
+export const importarCupons = async (
+  cupons: CupomData[]
+): Promise<{ importados: number; ignorados: number }> => {
+  let importados = 0;
+  let ignorados = 0;
+  for (const cupom of cupons) {
+    if (await cupomExiste(cupom.chaveAcesso)) {
+      ignorados++;
+      continue;
+    }
+    await insertCupom(cupom);
+    importados++;
+  }
+  return { importados, ignorados };
+};
+
 const mapProduto = (p: ProdutoRow): ProdutoData => ({
   id: p.id,
   nome: p.nome,
   codigo: p.codigo,
   gtin: p.gtin,
+  unidade: p.unidade ?? undefined,
+  marca: p.marca ?? undefined,
+  categoria: p.categoria ?? undefined,
   preco: p.preco,
   quantidade: p.quantidade,
   desconto: p.desconto,
@@ -284,6 +367,8 @@ const mapCupom = (cupom: CupomRow, produtos: ProdutoRow[]): CupomData => ({
     endereco: cupom.endereco ?? undefined,
     cidade: cupom.cidade ?? undefined,
     estado: cupom.estado ?? undefined,
+    latitude: cupom.latitude ?? undefined,
+    longitude: cupom.longitude ?? undefined,
   },
   produtos: produtos.map(mapProduto),
   data: cupom.data,
@@ -291,10 +376,14 @@ const mapCupom = (cupom: CupomRow, produtos: ProdutoRow[]): CupomData => ({
   descontoTotal: cupom.desconto_total,
   total: cupom.total,
   formaPagamento: cupom.forma_pagamento,
+  observacao: cupom.observacao ?? undefined,
+  favorito: cupom.favorito === 1,
+  dataImportacao: cupom.data_importacao ?? undefined,
 });
 
 const CUPOM_SELECT = `
-  SELECT c.*, e.nome as estabelecimento_nome, e.cnpj, e.endereco, e.cidade, e.estado
+  SELECT c.*, e.nome as estabelecimento_nome, e.cnpj, e.endereco, e.cidade, e.estado,
+    e.latitude, e.longitude
   FROM cupons c
   JOIN estabelecimentos e ON c.estabelecimento_id = e.id`;
 
@@ -320,6 +409,178 @@ export const getAllCupons = async (): Promise<CupomData[]> => {
   }
 
   return cupons.map(cupom => mapCupom(cupom, produtosPorCupom.get(cupom.id) || []));
+};
+
+/**
+ * Busca uma página de cupons diretamente no SQLite. Produtos são carregados apenas
+ * para os cupons retornados, evitando trazer todo o histórico para cada pesquisa.
+ */
+export const getCupons = async (
+  filtros: import('../../models/types').FiltroData = {}
+): Promise<CupomData[]> => {
+  const database = getDB();
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (filtros.termo?.trim()) {
+    const termo = `%${normalizarChaveNome(filtros.termo)}%`;
+    const termoCodigo = `%${filtros.termo.trim()}%`;
+    where.push(
+      `(lower(e.nome) LIKE lower(?) OR EXISTS (
+        SELECT 1 FROM produtos p
+        WHERE p.cupom_id = c.id
+          AND (p.nome_normalizado LIKE ? OR p.codigo LIKE ? OR COALESCE(p.gtin, '') LIKE ?)
+      ))`
+    );
+    params.push(`%${filtros.termo.trim()}%`, termo, termoCodigo, termoCodigo);
+  }
+  if (filtros.estabelecimento?.trim()) {
+    where.push('lower(e.nome) LIKE lower(?)');
+    params.push(`%${filtros.estabelecimento.trim()}%`);
+  }
+  if (filtros.dataInicio) {
+    where.push('c.data >= ?');
+    params.push(filtros.dataInicio);
+  }
+  if (filtros.dataFim) {
+    where.push('c.data <= ?');
+    params.push(filtros.dataFim);
+  }
+  if (filtros.precoMinimo !== undefined) {
+    where.push('c.total >= ?');
+    params.push(filtros.precoMinimo);
+  }
+  if (filtros.precoMaximo !== undefined) {
+    where.push('c.total <= ?');
+    params.push(filtros.precoMaximo);
+  }
+
+  const ordem = {
+    data_desc: 'c.data DESC',
+    data_asc: 'c.data ASC',
+    valor_desc: 'c.total DESC',
+    valor_asc: 'c.total ASC',
+  }[filtros.ordem || 'data_desc'];
+  const limite = filtros.limite ?? 50;
+  const offset = filtros.offset ?? 0;
+  const sql = `${CUPOM_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY ${ordem}, c.id DESC LIMIT ? OFFSET ?`;
+  const cupons = await database.getAllAsync<CupomRow>(sql, [...params, limite, offset]);
+  if (cupons.length === 0) return [];
+
+  const ids = cupons.map(cupom => cupom.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const produtos = await database.getAllAsync<ProdutoRow>(
+    `SELECT * FROM produtos WHERE cupom_id IN (${placeholders}) ORDER BY cupom_id, id`,
+    ids
+  );
+  const produtosPorCupom = new Map<number, ProdutoRow[]>();
+  for (const produto of produtos) {
+    const lista = produtosPorCupom.get(produto.cupom_id);
+    if (lista) lista.push(produto);
+    else produtosPorCupom.set(produto.cupom_id, [produto]);
+  }
+  return cupons.map(cupom => mapCupom(cupom, produtosPorCupom.get(cupom.id) || []));
+};
+
+export const atualizarCupom = async (
+  id: number,
+  dados: Pick<CupomData, 'observacao' | 'favorito'>
+): Promise<void> => {
+  await getDB().runAsync('UPDATE cupons SET observacao = ?, favorito = ? WHERE id = ?', [
+    dados.observacao || null,
+    dados.favorito ? 1 : 0,
+    id,
+  ]);
+};
+
+export const atualizarCoordenadasEstabelecimento = async (
+  cnpj: string,
+  latitude: number,
+  longitude: number
+): Promise<void> => {
+  await getDB().runAsync('UPDATE estabelecimentos SET latitude = ?, longitude = ? WHERE cnpj = ?', [
+    latitude,
+    longitude,
+    cnpj,
+  ]);
+};
+
+const NOME_LISTA_PADRAO = 'Minha lista';
+
+const obterOuCriarListaPadrao = async (): Promise<number> => {
+  const database = getDB();
+  const existente = await database.getFirstAsync<{ id: number }>(
+    'SELECT id FROM listas_compras ORDER BY id LIMIT 1'
+  );
+  if (existente) return existente.id;
+  const criada = await database.runAsync('INSERT INTO listas_compras (nome) VALUES (?)', [
+    NOME_LISTA_PADRAO,
+  ]);
+  return criada.lastInsertRowId;
+};
+
+export const getListaPadrao = async (): Promise<ListaCompra> => {
+  const database = getDB();
+  const listaId = await obterOuCriarListaPadrao();
+  const lista = await database.getFirstAsync<{ id: number; nome: string }>(
+    'SELECT id, nome FROM listas_compras WHERE id = ?',
+    [listaId]
+  );
+  if (!lista) throw new Error('Não foi possível carregar a lista de compras');
+  const itens = await database.getAllAsync<{
+    id: number;
+    lista_id: number;
+    nome: string;
+    quantidade: number;
+    comprado: number;
+    gtin: string | null;
+  }>(
+    'SELECT id, lista_id, nome, quantidade, comprado, gtin FROM itens_lista_compras WHERE lista_id = ? ORDER BY comprado, id',
+    [listaId]
+  );
+  return {
+    id: lista.id,
+    nome: lista.nome,
+    itens: itens.map<ItemListaCompra>(item => ({
+      id: item.id,
+      listaId: item.lista_id,
+      nome: item.nome,
+      quantidade: item.quantidade,
+      comprado: item.comprado === 1,
+      gtin: item.gtin,
+    })),
+  };
+};
+
+export const adicionarItemLista = async (nome: string, quantidade = 1): Promise<void> => {
+  const limpo = nome.trim();
+  if (!limpo) return;
+  const listaId = await obterOuCriarListaPadrao();
+  await getDB().withExclusiveTransactionAsync(async txn => {
+    await txn.runAsync(
+      'INSERT INTO itens_lista_compras (lista_id, nome, quantidade) VALUES (?, ?, ?)',
+      [listaId, limpo, Math.max(0.001, quantidade)]
+    );
+    await txn.runAsync('UPDATE listas_compras SET atualizada_em = CURRENT_TIMESTAMP WHERE id = ?', [
+      listaId,
+    ]);
+  });
+};
+
+export const marcarItemLista = async (itemId: number, comprado: boolean): Promise<void> => {
+  await getDB().runAsync('UPDATE itens_lista_compras SET comprado = ? WHERE id = ?', [
+    comprado ? 1 : 0,
+    itemId,
+  ]);
+};
+
+export const removerItemLista = async (itemId: number): Promise<void> => {
+  await getDB().runAsync('DELETE FROM itens_lista_compras WHERE id = ?', [itemId]);
+};
+
+export const limparItensComprados = async (): Promise<void> => {
+  await getDB().runAsync('DELETE FROM itens_lista_compras WHERE comprado = 1');
 };
 
 /**

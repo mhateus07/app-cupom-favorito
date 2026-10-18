@@ -1,12 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import {
+  View,
+  ScrollView,
+  StyleSheet,
+  Pressable,
+  ActivityIndicator,
+  Alert,
+  Share,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CaretLeft } from 'phosphor-react-native';
-import { getCupomById } from '../services/database/database';
+import { atualizarCupom, deleteCupom, getCupomById } from '../services/database/database';
 import { CupomData } from '../models/types';
 import { RootScreenProps } from '../navigation/types';
 import { formatarCNPJ, formatarQuantidade } from '../services/analytics/analyticsService';
-import { Card, LinhaTracejada, Selo, Serrilha, Texto } from '../components/ui';
+import { Botao, Card, CampoTexto, LinhaTracejada, Selo, Serrilha, Texto } from '../components/ui';
 import { radius, space, useTema } from '../theme';
 import {
   formatarChaveAcesso,
@@ -24,12 +32,16 @@ export const CupomDetailScreen: React.FC<RootScreenProps<'CupomDetail'>> = ({
   const insets = useSafeAreaInsets();
   const [cupom, setCupom] = useState<CupomData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [observacao, setObservacao] = useState('');
+  const [favorito, setFavorito] = useState(false);
 
   useEffect(() => {
     const loadCupom = async () => {
       try {
         const data = await getCupomById(cupomId);
         setCupom(data);
+        setObservacao(data?.observacao || '');
+        setFavorito(data?.favorito === true);
       } catch (error) {
         console.error('Erro ao carregar cupom:', error);
       } finally {
@@ -44,6 +56,48 @@ export const CupomDetailScreen: React.FC<RootScreenProps<'CupomDetail'>> = ({
     navigation.canGoBack()
       ? navigation.goBack()
       : navigation.navigate('Tabs', { screen: 'Cupons' });
+
+  const salvarMetadados = async () => {
+    try {
+      await atualizarCupom(cupomId, { observacao, favorito });
+      setCupom(atual => (atual ? { ...atual, observacao, favorito } : atual));
+      Alert.alert('Salvo', 'As informações do cupom foram atualizadas.');
+    } catch (error) {
+      console.error('Erro ao atualizar cupom:', error);
+      Alert.alert('Não foi possível salvar', 'Tente novamente em alguns instantes.');
+    }
+  };
+
+  const excluir = () => {
+    Alert.alert('Excluir cupom?', 'Essa ação remove o cupom e os itens salvos localmente.', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteCupom(cupomId);
+            navigation.goBack();
+          } catch (error) {
+            console.error('Erro ao excluir cupom:', error);
+            Alert.alert('Não foi possível excluir', 'Tente novamente em alguns instantes.');
+          }
+        },
+      },
+    ]);
+  };
+
+  const compartilhar = async () => {
+    const texto = [
+      cupom?.estabelecimento.nome,
+      cupom?.data,
+      ...(cupom?.produtos || []).map(
+        produto => `${produto.nome} — R$ ${formatarValor(produto.precoFinal)}`
+      ),
+      `Total: R$ ${formatarValor(cupom?.total || 0)}`,
+    ].join('\n');
+    await Share.share({ message: texto, title: 'Cupom Favorito' });
+  };
 
   const barraTopo = (
     <View style={[styles.topo, { paddingTop: insets.top + space.sm }]}>
@@ -117,7 +171,9 @@ export const CupomDetailScreen: React.FC<RootScreenProps<'CupomDetail'>> = ({
                 {(produto.quantidade !== 1 || produto.desconto > 0) && (
                   <View style={styles.itemLinha}>
                     <Texto variante="numberSmall" cor={cores.textMuted} style={styles.itemDetalhe}>
-                      {formatarQuantidade(produto.quantidade)} × {formatarValor(produto.preco)}
+                      {formatarQuantidade(produto.quantidade)}
+                      {produto.unidade ? ` ${produto.unidade}` : ''} ×{' '}
+                      {formatarValor(produto.preco)}
                     </Texto>
                     {produto.desconto > 0 && (
                       <Texto variante="numberSmall" cor={cores.saving} style={styles.itemDetalhe}>
@@ -195,6 +251,34 @@ export const CupomDetailScreen: React.FC<RootScreenProps<'CupomDetail'>> = ({
               </View>
             ))}
         </Card>
+
+        <Card style={styles.edicao}>
+          <View style={styles.edicaoTopo}>
+            <Texto variante="subtitle">Organização</Texto>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: favorito }}
+              onPress={() => setFavorito(valor => !valor)}
+              style={[styles.favorito, favorito && { backgroundColor: cores.inverse }]}
+            >
+              <Texto variante="small" cor={favorito ? cores.onInverse : cores.textMuted}>
+                {favorito ? 'Favorito' : 'Favoritar'}
+              </Texto>
+            </Pressable>
+          </View>
+          <CampoTexto
+            rotulo="Observação"
+            value={observacao}
+            onChangeText={setObservacao}
+            placeholder="Ex.: compra do mês, churrasco..."
+            multiline
+            textAlignVertical="top"
+            style={styles.observacao}
+          />
+          <Botao titulo="Salvar alterações" onPress={salvarMetadados} />
+          <Botao titulo="Compartilhar resumo" variante="contorno" onPress={compartilhar} />
+          <Botao titulo="Excluir cupom" variante="contorno" onPress={excluir} />
+        </Card>
       </ScrollView>
     </View>
   );
@@ -271,6 +355,23 @@ const styles = StyleSheet.create({
     marginTop: space.xl,
     paddingVertical: space.xs,
     paddingHorizontal: space.lg,
+  },
+  edicao: {
+    marginTop: space.xl,
+    gap: space.lg,
+  },
+  edicaoTopo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  favorito: {
+    borderRadius: radius.tag,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  observacao: {
+    minHeight: 84,
   },
   dado: {
     paddingVertical: space.md,

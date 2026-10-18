@@ -7,6 +7,8 @@ export interface EstabelecimentoData {
   endereco?: string;
   cidade?: string;
   estado?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface ProdutoData {
@@ -14,6 +16,9 @@ export interface ProdutoData {
   nome: string;
   codigo: string; // Código exibido (GTIN quando existe, senão o código interno da loja)
   gtin?: string | null; // Código de barras válido, usado para comparar entre mercados
+  unidade?: string; // UN, KG, L etc., quando informado pela NFC-e
+  marca?: string;
+  categoria?: string;
   preco: number; // Preço unitário cobrado (antes do desconto)
   quantidade: number;
   desconto: number;
@@ -32,6 +37,9 @@ export interface CupomData {
   descontoTotal: number;
   total: number;
   formaPagamento: string;
+  observacao?: string;
+  favorito?: boolean;
+  dataImportacao?: string;
 }
 
 // Tipos para análises e estatísticas
@@ -65,6 +73,7 @@ export interface EstabelecimentoEstatistica {
   produtosComparados: number;
   /** Quanto as suas compras desses produtos custariam a menos aqui do que na média. */
   economiaEstimada: number;
+  distancia?: number;
 }
 
 export interface ResumoGeral {
@@ -79,6 +88,13 @@ export interface ResumoGeral {
   };
 }
 
+export interface GastoMensal {
+  referencia: string;
+  gasto: number;
+  economia: number;
+  cupons: number;
+}
+
 export interface Recomendacao {
   estabelecimento: string;
   score: number; // 0-100
@@ -90,14 +106,43 @@ export interface Recomendacao {
 // Tipos para filtros e buscas
 
 export interface FiltroData {
+  termo?: string;
   estabelecimento?: string;
   dataInicio?: string;
   dataFim?: string;
   precoMinimo?: number;
   precoMaximo?: number;
+  limite?: number;
+  offset?: number;
+  ordem?: 'data_desc' | 'data_asc' | 'valor_desc' | 'valor_asc';
 }
 
 export interface ProdutoBusca {
   termo: string;
   filtro?: FiltroData;
+}
+
+export interface ItemListaCompra {
+  id: number;
+  listaId: number;
+  nome: string;
+  quantidade: number;
+  comprado: boolean;
+  gtin?: string | null;
+}
+
+export interface ListaCompra {
+  id: number;
+  nome: string;
+  itens: ItemListaCompra[];
+}
+
+export interface CestaMercado {
+  estabelecimento: string;
+  cnpj: string;
+  totalEstimado: number;
+  itensEncontrados: number;
+  itensNaoEncontrados: number;
+  distancia?: number;
+  economia?: number;
 }

@@ -1,10 +1,13 @@
 import {
   CupomData,
+  CestaMercado,
   EstabelecimentoEstatistica,
+  GastoMensal,
   ProdutoData,
   ProdutoEstatistica,
   ResumoGeral,
   Recomendacao,
+  ItemListaCompra,
 } from '../../models/types';
 import { groupBy, meanBy, maxBy, sumBy, orderBy } from 'lodash';
 import { format, parseISO } from 'date-fns';
@@ -218,6 +221,20 @@ export const resumoDoUltimoMes = (
   };
 };
 
+export const analisarGastosMensais = (cupons: CupomData[]): GastoMensal[] => {
+  const grupos = groupBy(cupons, cupom => cupom.data.slice(0, 7));
+  return orderBy(
+    Object.entries(grupos).map(([referencia, lista]) => ({
+      referencia,
+      gasto: arredondar(sumBy(lista, 'total')),
+      economia: arredondar(sumBy(lista, 'descontoTotal')),
+      cupons: lista.length,
+    })),
+    ['referencia'],
+    ['desc']
+  );
+};
+
 /**
  * Compara preços de um produto entre estabelecimentos
  */
@@ -236,6 +253,69 @@ export const compararPrecoProduto = (
     }));
 
   return orderBy(encontrados, ['preco'], ['asc']);
+};
+
+/**
+ * Estima o custo da lista em cada mercado usando o menor preço histórico observado
+ * para cada item. Itens sem correspondência são contabilizados para não esconder
+ * uma cesta incompleta.
+ */
+export const calcularCestaPorMercado = (
+  itens: ItemListaCompra[],
+  cupons: CupomData[]
+): CestaMercado[] => {
+  const pendentes = itens.filter(item => !item.comprado);
+  if (pendentes.length === 0) return [];
+
+  const observacoes = listarItens(cupons);
+  const mercados = Object.values(groupBy(observacoes, 'cnpj')).map(lista => ({
+    nome: lista[0].estabelecimento,
+    cnpj: lista[0].cnpj,
+  }));
+
+  const resultado = mercados.map(mercado => {
+    let totalEstimado = 0;
+    let itensEncontrados = 0;
+    let itensNaoEncontrados = 0;
+
+    for (const item of pendentes) {
+      const termo = normalizarChaveNome(item.nome);
+      const encontrados = observacoes.filter(observacao => {
+        if (observacao.cnpj !== mercado.cnpj) return false;
+        if (item.gtin && observacao.gtin) return item.gtin === observacao.gtin;
+        const nome = normalizarChaveNome(observacao.nome);
+        return nome.includes(termo) || termo.includes(nome);
+      });
+
+      const menorPreco = Math.min(...encontrados.map(observacao => observacao.precoUnitario));
+      if (Number.isFinite(menorPreco)) {
+        totalEstimado += menorPreco * item.quantidade;
+        itensEncontrados++;
+      } else {
+        itensNaoEncontrados++;
+      }
+    }
+
+    return {
+      estabelecimento: mercado.nome,
+      cnpj: mercado.cnpj,
+      totalEstimado: arredondar(totalEstimado),
+      itensEncontrados,
+      itensNaoEncontrados,
+    };
+  });
+
+  const completos = resultado.filter(item => item.itensEncontrados > 0);
+  const menor = Math.min(...completos.map(item => item.totalEstimado));
+  return orderBy(
+    completos.map(item => ({
+      ...item,
+      totalEstimado: item.totalEstimado,
+      economia: Number.isFinite(menor) ? arredondar(item.totalEstimado - menor) : 0,
+    })),
+    ['itensNaoEncontrados', 'totalEstimado'],
+    ['asc', 'asc']
+  ) as CestaMercado[];
 };
 
 /**

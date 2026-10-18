@@ -76,6 +76,29 @@ export interface SefazConsultaResult {
   chaveAcesso: string;
 }
 
+export interface NfceProviderInput {
+  qrCodeUrl: string;
+  chaveAcesso: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Contrato para integrar uma API comercial ou um backend próprio sem acoplar o
+ * aplicativo a um fornecedor específico. O provedor deve devolver XML ou HTML
+ * compatível com o extrator atual.
+ */
+export interface NfceProvider {
+  nome: string;
+  consultar: (input: NfceProviderInput) => Promise<SefazConsultaResult>;
+}
+
+export interface ConsultarNfceOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  provider?: NfceProvider;
+}
+
 /**
  * Extrai a UF (estado) de uma chave de acesso
  */
@@ -109,7 +132,8 @@ export const getConsultaURL = (uf: string): string | null => {
  */
 export const consultarNFCe = async (
   qrCodeUrl: string,
-  chaveAcesso: string
+  chaveAcesso: string,
+  options: ConsultarNfceOptions = {}
 ): Promise<SefazConsultaResult> => {
   const uf = getUFFromChave(chaveAcesso);
 
@@ -121,6 +145,26 @@ export const consultarNFCe = async (
     };
   }
 
+  if (options.provider) {
+    try {
+      const resultado = await options.provider.consultar({
+        qrCodeUrl,
+        chaveAcesso,
+        signal: options.signal,
+      });
+      return { ...resultado, uf: resultado.uf || uf, chaveAcesso };
+    } catch (error) {
+      return {
+        success: false,
+        error: `O provedor ${options.provider.nome} não conseguiu consultar a NFC-e: ${
+          error instanceof Error ? error.message : 'erro desconhecido'
+        }`,
+        uf,
+        chaveAcesso,
+      };
+    }
+  }
+
   if (!/^https?:\/\//i.test(qrCodeUrl)) {
     return {
       success: false,
@@ -130,54 +174,86 @@ export const consultarNFCe = async (
     };
   }
 
-  try {
-    const response = await axios.get<string>(qrCodeUrl, {
-      timeout: 15000,
-      responseType: 'text',
-      // Mantém o corpo como texto, sem tentativa de parse JSON
-      transformResponse: [data => data],
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Mobile Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
+  const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? 3, 4));
+  const timeout = options.timeoutMs ?? 15000;
 
-    const content = typeof response.data === 'string' ? response.data : String(response.data ?? '');
-    const contentType = String(response.headers['content-type'] || '');
+  for (let tentativa = 1; tentativa <= maxAttempts; tentativa++) {
+    try {
+      const response = await axios.get<string>(qrCodeUrl, {
+        timeout,
+        signal: options.signal,
+        responseType: 'text',
+        // Mantém o corpo como texto, sem tentativa de parse JSON
+        transformResponse: [data => data],
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Mobile Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
 
-    if (!content.trim()) {
+      const content =
+        typeof response.data === 'string' ? response.data : String(response.data ?? '');
+      const contentType = String(response.headers['content-type'] || '');
+
+      if (!content.trim()) {
+        return {
+          success: false,
+          error: `A SEFAZ/${uf} retornou uma resposta vazia.`,
+          uf,
+          chaveAcesso,
+        };
+      }
+
+      if (contentType.includes('xml') || content.trimStart().startsWith('<?xml')) {
+        return { success: true, xmlContent: content, uf, chaveAcesso };
+      }
+
+      // Alguns portais embutem o XML completo dentro do HTML
+      const xmlMatch = content.match(/<nfeProc[\s\S]*<\/nfeProc>/);
+
       return {
-        success: false,
-        error: `A SEFAZ/${uf} retornou uma resposta vazia.`,
+        success: true,
+        xmlContent: xmlMatch?.[0],
+        htmlContent: content,
         uf,
         chaveAcesso,
       };
+    } catch (requestError) {
+      const cancelado = axios.isCancel(requestError) || options.signal?.aborted;
+      if (cancelado || tentativa === maxAttempts) {
+        console.error('Erro na requisição à SEFAZ:', requestError);
+
+        return {
+          success: false,
+          error: cancelado
+            ? 'A consulta à SEFAZ foi cancelada.'
+            : `Não foi possível acessar a SEFAZ/${uf}: ${
+                axios.isAxiosError(requestError) && requestError.response?.status
+                  ? `HTTP ${requestError.response.status}`
+                  : requestError instanceof Error
+                    ? requestError.message
+                    : 'erro desconhecido'
+              }`,
+          uf,
+          chaveAcesso,
+        };
+      }
+
+      const status = axios.isAxiosError(requestError) ? requestError.response?.status : undefined;
+      const podeTentarNovamente =
+        !status || status === 408 || status === 425 || status === 429 || status >= 500;
+      if (!podeTentarNovamente) {
+        return {
+          success: false,
+          error: `A SEFAZ/${uf} recusou a consulta (HTTP ${status}).`,
+          uf,
+          chaveAcesso,
+        };
+      }
+
+      await new Promise(resolve => setTimeout(resolve, tentativa * 400));
     }
-
-    if (contentType.includes('xml') || content.trimStart().startsWith('<?xml')) {
-      return { success: true, xmlContent: content, uf, chaveAcesso };
-    }
-
-    // Alguns portais embutem o XML completo dentro do HTML
-    const xmlMatch = content.match(/<nfeProc[\s\S]*<\/nfeProc>/);
-
-    return {
-      success: true,
-      xmlContent: xmlMatch?.[0],
-      htmlContent: content,
-      uf,
-      chaveAcesso,
-    };
-  } catch (requestError) {
-    console.error('Erro na requisição à SEFAZ:', requestError);
-
-    return {
-      success: false,
-      error: `Não foi possível acessar a SEFAZ/${uf}: ${
-        requestError instanceof Error ? requestError.message : 'erro desconhecido'
-      }`,
-      uf,
-      chaveAcesso,
-    };
   }
+
+  return { success: false, error: 'Consulta não concluída.', uf, chaveAcesso };
 };
